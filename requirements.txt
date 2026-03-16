@@ -1,0 +1,9 @@
+paho-mqtt
+pandas
+web3
+fastapi
+uvicorn
+pytest
+python-dotenv
+streamlit
+matplotlib
