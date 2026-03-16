@@ -1,0 +1,16 @@
+__pycache__/
+.venv/
+*.pyc
+
+node_modules/
+
+data/
+outputs/
+plots/
+
+.env
+*.log
+
+# Phase docs (planning only, not part of final code)
+docs/phases/
+
