@@ -13,7 +13,7 @@ IoT telemetry pipeline: a simulator publishes telemetry over MQTT; the oracle in
 
 - **simulator/** – IoT producer script(s)
 - **oracle/** – Gateway service (MQTT ingest, windowing, anomaly detection, anchoring)
-- **contracts/** – Hardhat project and Solidity anchor contract
+- **contracts/** – Hardhat project and Solidity anchor contract (placeholder only; real contract and deploy script in Phase 5)
 - **dashboard/** – Streamlit app for metrics
 
 Run instructions for each component will be added in later phases.

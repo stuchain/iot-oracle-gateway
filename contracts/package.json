@@ -1,0 +1,16 @@
+{
+  "name": "iot-oracle-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "test": "hardhat test"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.1.3",
+    "chai": "^4.5.0",
+    "ethers": "^6.4.0",
+    "hardhat": "^2.22.0"
+  }
+}
