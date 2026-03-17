@@ -1,10 +1,15 @@
-"""Tests for IoT simulator: one tick, correct topic and payload keys."""
+"""Tests for IoT simulator: one tick, correct topic and payload keys; effective_interval for burst."""
 import json
 from unittest.mock import MagicMock
 
-import pytest
+from simulator.iot_simulator import compute_effective_interval, run_tick
 
-from simulator.iot_simulator import run_tick
+# Fixed burst params for deterministic tests
+INTERVAL_SEC = 1.0
+BURST_START_SEC = 60
+BURST_DURATION_SEC = 20
+BURST_MULTIPLIER = 5.0
+EXPECTED_BURST_INTERVAL = INTERVAL_SEC / BURST_MULTIPLIER  # 0.2
 
 
 def test_one_tick_publishes_to_correct_topic_with_required_keys():
@@ -28,3 +33,45 @@ def test_one_tick_publishes_to_correct_topic_with_required_keys():
     assert isinstance(payload["power_w"], (int, float))
     assert isinstance(payload["hmac"], str)
     assert len(payload["hmac"]) == 64
+
+
+def test_effective_interval_outside_burst_window():
+    """Outside [BURST_START_SEC, BURST_START_SEC + BURST_DURATION_SEC) -> INTERVAL_SEC."""
+    for elapsed in (0, 50, 85):
+        got = compute_effective_interval(
+            elapsed, INTERVAL_SEC, True, BURST_START_SEC, BURST_DURATION_SEC, BURST_MULTIPLIER
+        )
+        assert got == INTERVAL_SEC
+
+
+def test_effective_interval_inside_burst_window():
+    """Inside burst window -> INTERVAL_SEC / BURST_MULTIPLIER."""
+    for elapsed in (60, 70, 79):
+        got = compute_effective_interval(
+            elapsed, INTERVAL_SEC, True, BURST_START_SEC, BURST_DURATION_SEC, BURST_MULTIPLIER
+        )
+        assert got == EXPECTED_BURST_INTERVAL
+
+
+def test_effective_interval_boundary_at_start_in_burst():
+    """elapsed_sec == BURST_START_SEC -> in burst."""
+    got = compute_effective_interval(
+        60, INTERVAL_SEC, True, BURST_START_SEC, BURST_DURATION_SEC, BURST_MULTIPLIER
+    )
+    assert got == EXPECTED_BURST_INTERVAL
+
+
+def test_effective_interval_boundary_at_end_not_in_burst():
+    """elapsed_sec == BURST_START_SEC + BURST_DURATION_SEC -> not in burst."""
+    got = compute_effective_interval(
+        80, INTERVAL_SEC, True, BURST_START_SEC, BURST_DURATION_SEC, BURST_MULTIPLIER
+    )
+    assert got == INTERVAL_SEC
+
+
+def test_effective_interval_burst_disabled_always_normal():
+    """BURST_ENABLED false -> always INTERVAL_SEC even inside window."""
+    got = compute_effective_interval(
+        70, INTERVAL_SEC, False, BURST_START_SEC, BURST_DURATION_SEC, BURST_MULTIPLIER
+    )
+    assert got == INTERVAL_SEC

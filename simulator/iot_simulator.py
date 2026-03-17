@@ -1,4 +1,4 @@
-"""N-device IoT telemetry simulator: one loop, MQTT publish with HMAC (no burst in this module)."""
+"""N-device IoT telemetry simulator: one loop, MQTT publish with HMAC and optional burst mode."""
 import argparse
 import json
 import logging
@@ -30,15 +30,41 @@ def _int(key: str, default: int) -> int:
         return default
 
 
+def _bool(key: str, default: bool) -> bool:
+    val = os.getenv(key)
+    if val is None:
+        return default
+    return str(val).lower() in ("1", "true", "yes")
+
+
 def get_config():
-    """Parse env with optional argparse override. Returns namespace with N_DEVICES, INTERVAL_SEC, MQTT_HOST, MQTT_PORT, HMAC_SECRET."""
+    """Parse env with optional argparse override. Returns namespace with N_DEVICES, INTERVAL_SEC, MQTT, HMAC_SECRET, and burst options."""
     parser = argparse.ArgumentParser(description="IoT telemetry simulator")
     parser.add_argument("--devices", type=int, default=_int("N_DEVICES", 5), help="Number of devices (env: N_DEVICES)")
     parser.add_argument("--interval", type=float, default=float(os.getenv("INTERVAL_SEC", "1")), help="Tick interval seconds (env: INTERVAL_SEC)")
     parser.add_argument("--host", type=str, default=os.getenv("MQTT_HOST", "localhost"), help="MQTT broker host (env: MQTT_HOST)")
     parser.add_argument("--port", type=int, default=_int("MQTT_PORT", 1883), help="MQTT broker port (env: MQTT_PORT)")
     parser.add_argument("--secret", type=str, default=os.getenv("HMAC_SECRET", "change-me-in-production"), help="HMAC secret (env: HMAC_SECRET)")
+    parser.add_argument("--burst-enabled", type=lambda x: str(x).lower() in ("1", "true", "yes"), default=_bool("BURST_ENABLED", False), help="Enable burst window (env: BURST_ENABLED)")
+    parser.add_argument("--burst-start", type=int, default=_int("BURST_START_SEC", 60), help="Burst start time in seconds (env: BURST_START_SEC)")
+    parser.add_argument("--burst-duration", type=int, default=_int("BURST_DURATION_SEC", 20), help="Burst duration in seconds (env: BURST_DURATION_SEC)")
+    parser.add_argument("--burst-multiplier", type=float, default=float(os.getenv("BURST_MULTIPLIER", "5")), help="Interval divisor during burst (env: BURST_MULTIPLIER)")
     return parser.parse_args()
+
+
+def compute_effective_interval(
+    elapsed_sec: float,
+    interval_sec: float,
+    burst_enabled: bool,
+    burst_start_sec: int,
+    burst_duration_sec: int,
+    burst_multiplier: float,
+) -> float:
+    """Return sleep interval for this tick: shorter during burst window, else interval_sec."""
+    if not burst_enabled:
+        return interval_sec
+    in_window = burst_start_sec <= elapsed_sec < burst_start_sec + burst_duration_sec
+    return interval_sec / burst_multiplier if in_window else interval_sec
 
 
 def device_ids(n: int) -> list[str]:
@@ -67,6 +93,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = get_config()
     devices = device_ids(cfg.devices)
+    start_time = time.time()
     try:
         import paho.mqtt.client as mqtt
     except ImportError:
@@ -76,13 +103,34 @@ def main() -> None:
     client.connect(cfg.host, cfg.port)
     client.loop_start()
     tick = 0
+    in_burst = False
     try:
         while True:
+            elapsed_sec = time.time() - start_time
+            now_in_burst = (
+                cfg.burst_enabled
+                and cfg.burst_start <= elapsed_sec < cfg.burst_start + cfg.burst_duration
+            )
+            if now_in_burst and not in_burst:
+                LOG.info("Burst started")
+            elif in_burst and not now_in_burst:
+                LOG.info("Burst ended")
+            in_burst = now_in_burst
+
             run_tick(client, devices, cfg.secret, cfg.host, cfg.port)
             tick += 1
             if tick % 10 == 0 or tick == 1:
                 LOG.info("tick %d: published %d messages", tick, len(devices))
-            time.sleep(cfg.interval)
+
+            effective_interval = compute_effective_interval(
+                elapsed_sec,
+                cfg.interval,
+                cfg.burst_enabled,
+                cfg.burst_start,
+                cfg.burst_duration,
+                cfg.burst_multiplier,
+            )
+            time.sleep(effective_interval)
     except KeyboardInterrupt:
         pass
     finally:
