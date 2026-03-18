@@ -9,6 +9,20 @@ IoT telemetry pipeline: a simulator publishes telemetry over MQTT; the oracle in
 - **Ganache** (CLI or GUI) for local Ethereum
 - **Mosquitto** for MQTT
 
+## Running Mosquitto
+
+Start the MQTT broker using the project config (default port **1883**; simulator and oracle use `localhost:1883` unless overridden):
+
+```bash
+mosquitto -c mosquitto/mosquitto.conf
+```
+
+To subscribe and verify telemetry (e.g. after starting the simulator):
+
+```bash
+mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v
+```
+
 ## Components
 
 - **simulator/** – IoT producer script(s)
@@ -24,10 +38,10 @@ Run the telemetry simulator (requires Mosquitto or another MQTT broker):
 python -m simulator.iot_simulator
 ```
 
-Config via env or CLI: `N_DEVICES`, `INTERVAL_SEC`, `MQTT_HOST`, `MQTT_PORT`, `HMAC_SECRET`. Subscribe to telemetry with:
+Config via env or CLI: `N_DEVICES`, `INTERVAL_SEC`, `MQTT_HOST`, `MQTT_PORT`, `HMAC_SECRET`. Subscribe to telemetry with (see also "Running Mosquitto" above):
 
 ```bash
-mosquitto_sub -t 'iot/devices/+/telemetry'
+mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v
 ```
 
 **Burst scenario:** To trigger a higher message rate during a time window (e.g. for anomaly evaluation), run for ~2 minutes with burst at 60s for 20s:
