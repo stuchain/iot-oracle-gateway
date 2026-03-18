@@ -23,6 +23,29 @@ To subscribe and verify telemetry (e.g. after starting the simulator):
 mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v
 ```
 
+## Manual MQTT sanity test
+
+To confirm the simulator publishes as expected and the broker delivers messages:
+
+1. **Start Mosquitto:** `mosquitto -c mosquitto/mosquitto.conf`
+2. **Start the simulator** (e.g. with 2 devices, 1s interval):  
+   `N_DEVICES=2 INTERVAL_SEC=1 python -m simulator.iot_simulator`  
+   (On Windows: `set N_DEVICES=2 && set INTERVAL_SEC=1 && python -m simulator.iot_simulator`)
+3. **In another terminal**, run:  
+   `mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v`
+4. **Expect** JSON messages with fields: `device_id`, `ts_ms`, `temp_c`, `humidity_pct`, `power_w`, `hmac`.
+
+**Topic pattern (copy-paste):** `iot/devices/+/telemetry`  
+**Example topics:** `iot/devices/dev-01/telemetry`, `iot/devices/dev-02/telemetry`, etc.
+
+**Sample telemetry JSON (one line):**
+
+```json
+{"device_id":"dev-01","ts_ms":1710000000000,"temp_c":24.5,"humidity_pct":55.0,"power_w":42.0,"hmac":"a1b2c3..."}
+```
+
+This is documented steps only; no automated tests are added for this sanity check.
+
 ## Components
 
 - **simulator/** – IoT producer script(s)
