@@ -38,5 +38,5 @@ HMAC_SECRET = os.getenv("HMAC_SECRET", "change-me-in-production")
 
 # Data paths (default: repo-root "data/" and files under it)
 DATA_DIR = os.getenv("DATA_DIR", "data")
-WINDOWS_CSV_PATH = os.path.join(DATA_DIR, "windows.csv")
+WINDOWS_CSV_PATH = os.path.join(DATA_DIR, "telemetry_windows.csv")
 ANCHOR_LOG_PATH = os.path.join(DATA_DIR, "anchor_log.txt")
