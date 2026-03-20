@@ -13,10 +13,11 @@ from typing import Any, Optional
 import uvicorn
 from fastapi import FastAPI
 
-from oracle.config import HMAC_SECRET, WINDOW_SEC, WINDOWS_CSV_PATH
+from oracle.config import EWMA_ALPHA, HMAC_SECRET, WINDOW_SEC, WINDOWS_CSV_PATH, Z_THRESHOLD
 from oracle.mqtt_client import start_mqtt_consumer
 from oracle.verify import verify_payload
 from oracle.windows import WindowAggregator, WindowSummary
+from oracle.ewma import EWMAZScoreAnomalyDetector
 
 LOG = logging.getLogger(__name__)
 
@@ -40,15 +41,23 @@ class OracleState:
         window_sec: int,
         secret: bytes,
         csv_path: str,
+        ewma_alpha: float,
+        ewma_z_threshold: float,
+        ewma_epsilon: float,
     ) -> None:
         self._lock = threading.Lock()
         self._window_sec = window_sec
         self._secret = secret
         self._csv_path = csv_path
         self.aggregator = WindowAggregator(window_sec)
+        self._ewma_detector = EWMAZScoreAnomalyDetector(
+            alpha=ewma_alpha, z_threshold=ewma_z_threshold, epsilon=ewma_epsilon
+        )
         self.verified_count = 0
         self.rejected_count = 0
         self.latest_window: Optional[WindowSummary] = None
+        self.latest_z_score: Optional[float] = None
+        self.latest_is_anomaly: int = 0
         self.last_anchor_info: dict[str, Any] = {
             "success": False,
             "batch_hash": None,
@@ -65,7 +74,7 @@ class OracleState:
                 writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
                 writer.writeheader()
 
-    def _append_window_row(self, summary: WindowSummary) -> None:
+    def _append_window_row(self, summary: WindowSummary, z_score: float, is_anomaly: bool) -> None:
         with open(self._csv_path, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
             writer.writerow(
@@ -75,8 +84,8 @@ class OracleState:
                     "msg_count": summary.msg_count,
                     "msgs_per_sec": summary.msgs_per_sec,
                     "avg_latency_ms": summary.avg_latency_ms,
-                    "z_score": "",
-                    "is_anomaly": 0,
+                    "z_score": z_score,
+                    "is_anomaly": 1 if is_anomaly else 0,
                 }
             )
 
@@ -90,15 +99,23 @@ class OracleState:
             self.verified_count += 1
             summaries = self.aggregator.add_message(parsed, ingest_ts_ms)
             for s in summaries:
-                self._append_window_row(s)
+                z_score, is_anomaly = self._ewma_detector.update(s.msgs_per_sec)
+                self._append_window_row(s, z_score=z_score, is_anomaly=is_anomaly)
                 self.latest_window = s
+                self.latest_z_score = z_score
+                self.latest_is_anomaly = 1 if is_anomaly else 0
+                if is_anomaly:
+                    LOG.info("Window [%s-%s]: z=%.4f -> anomaly=True", s.window_start_ms, s.window_end_ms, z_score)
 
     def flush_windows(self) -> None:
         """Finalize open window and append CSV rows (e.g. on shutdown)."""
         with self._lock:
             for s in self.aggregator.flush():
-                self._append_window_row(s)
+                z_score, is_anomaly = self._ewma_detector.update(s.msgs_per_sec)
+                self._append_window_row(s, z_score=z_score, is_anomaly=is_anomaly)
                 self.latest_window = s
+                self.latest_z_score = z_score
+                self.latest_is_anomaly = 1 if is_anomaly else 0
 
     def metrics_payload(self) -> dict[str, Any]:
         with self._lock:
@@ -111,8 +128,8 @@ class OracleState:
                 "msg_count": lw.msg_count if lw else None,
                 "msgs_per_sec": lw.msgs_per_sec if lw else None,
                 "avg_latency_ms": lw.avg_latency_ms if lw else None,
-                "z_score": None,
-                "is_anomaly": 0,
+                "z_score": self.latest_z_score if lw else None,
+                "is_anomaly": self.latest_is_anomaly if lw else 0,
                 "last_anchor_info": dict(self.last_anchor_info),
             }
             return out
@@ -137,12 +154,18 @@ def create_app(
     window_sec: Optional[int] = None,
     hmac_secret: Optional[str] = None,
     csv_path: Optional[str] = None,
+    ewma_alpha: Optional[float] = None,
+    ewma_z_threshold: Optional[float] = None,
+    ewma_epsilon: Optional[float] = None,
 ) -> FastAPI:
     """Build FastAPI app and start background MQTT consumer unless ``start_mqtt=False``."""
     ws = window_sec if window_sec is not None else WINDOW_SEC
     secret_str = hmac_secret if hmac_secret is not None else HMAC_SECRET
     secret_bytes = secret_str.encode("utf-8")
     csv_p = csv_path if csv_path is not None else WINDOWS_CSV_PATH
+    alpha = ewma_alpha if ewma_alpha is not None else EWMA_ALPHA
+    z_threshold = ewma_z_threshold if ewma_z_threshold is not None else Z_THRESHOLD
+    epsilon = ewma_epsilon if ewma_epsilon is not None else 1e-6
 
     q: queue.Queue[tuple[str, int]] = message_queue if message_queue is not None else queue.Queue()
     mqtt_client = None
@@ -150,7 +173,14 @@ def create_app(
     if start_mqtt:
         mqtt_client, q, _mqtt_loop_thread = start_mqtt_consumer(message_queue=q)
 
-    state = OracleState(window_sec=ws, secret=secret_bytes, csv_path=csv_p)
+    state = OracleState(
+        window_sec=ws,
+        secret=secret_bytes,
+        csv_path=csv_p,
+        ewma_alpha=alpha,
+        ewma_z_threshold=z_threshold,
+        ewma_epsilon=epsilon,
+    )
     stop_consumer = threading.Event()
     consumer_thread = threading.Thread(
         target=_consumer_loop,
