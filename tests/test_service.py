@@ -34,6 +34,8 @@ def test_service_synthetic_queue_csv_and_metrics(tmp_path):
         start_mqtt=False,
         message_queue=q,
         csv_path=str(csv_path),
+        anchoring_log_path=str(tmp_path / "anchoring_log.csv"),
+        contract_address="",
         window_sec=5,
         hmac_secret=secret,
     )
@@ -82,6 +84,8 @@ def test_service_burst_triggers_anomaly(tmp_path):
         start_mqtt=False,
         message_queue=q,
         csv_path=str(csv_path),
+        anchoring_log_path=str(tmp_path / "anchoring_log.csv"),
+        contract_address="",
         window_sec=5,
         hmac_secret=secret,
         ewma_alpha=ewma_alpha,
@@ -135,6 +139,8 @@ def test_service_rejects_invalid_json(tmp_path):
         start_mqtt=False,
         message_queue=q,
         csv_path=str(csv_path),
+        anchoring_log_path=str(tmp_path / "anchoring_log.csv"),
+        contract_address="",
         window_sec=5,
         hmac_secret=secret,
     )

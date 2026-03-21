@@ -8,16 +8,31 @@ import os
 import queue
 import threading
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from dataclasses import replace
+from datetime import datetime, timezone
+from typing import Any, Callable, Optional
 
 import uvicorn
 from fastapi import FastAPI
 
-from oracle.config import EWMA_ALPHA, HMAC_SECRET, WINDOW_SEC, WINDOWS_CSV_PATH, Z_THRESHOLD
+from oracle.anchor_contract import AnchorResult, send_anchor
+from oracle.batch import build_batch
+from oracle.config import (
+    ANCHORING_LOG_PATH,
+    ANCHOR_INTERVAL_SEC,
+    CONTRACT_ABI_PATH,
+    CONTRACT_ADDRESS,
+    EWMA_ALPHA,
+    GANACHE_URL,
+    HMAC_SECRET,
+    WINDOW_SEC,
+    WINDOWS_CSV_PATH,
+    Z_THRESHOLD,
+)
+from oracle.ewma import EWMAZScoreAnomalyDetector
 from oracle.mqtt_client import start_mqtt_consumer
 from oracle.verify import verify_payload
 from oracle.windows import WindowAggregator, WindowSummary
-from oracle.ewma import EWMAZScoreAnomalyDetector
 
 LOG = logging.getLogger(__name__)
 
@@ -30,6 +45,17 @@ CSV_COLUMNS = [
     "z_score",
     "is_anomaly",
 ]
+
+ANCHORING_CSV_COLUMNS = [
+    "timestamp_iso",
+    "batch_hash",
+    "tx_hash",
+    "success",
+    "skipped",
+    "error",
+]
+
+AnchorSendFn = Callable[[bytes, int, int, int], AnchorResult]
 
 
 class OracleState:
@@ -44,11 +70,16 @@ class OracleState:
         ewma_alpha: float,
         ewma_z_threshold: float,
         ewma_epsilon: float,
+        anchoring_log_path: str,
+        anchor_send: Optional[AnchorSendFn] = None,
     ) -> None:
         self._lock = threading.Lock()
         self._window_sec = window_sec
         self._secret = secret
         self._csv_path = csv_path
+        self._anchoring_log_path = anchoring_log_path
+        self._anchor_send = anchor_send
+        self._pending_anchor: list[WindowSummary] = []
         self.aggregator = WindowAggregator(window_sec)
         self._ewma_detector = EWMAZScoreAnomalyDetector(
             alpha=ewma_alpha, z_threshold=ewma_z_threshold, epsilon=ewma_epsilon
@@ -62,6 +93,9 @@ class OracleState:
             "success": False,
             "batch_hash": None,
             "tx_hash": None,
+            "skipped": False,
+            "error": None,
+            "block_number": None,
         }
         self._ensure_csv_header()
 
@@ -73,6 +107,37 @@ class OracleState:
             with open(self._csv_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
                 writer.writeheader()
+
+    def _append_anchoring_log(
+        self,
+        *,
+        batch_hash: str,
+        tx_hash: str,
+        success: bool,
+        skipped: bool,
+        error: str,
+    ) -> None:
+        ts = datetime.now(timezone.utc).isoformat()
+        parent = os.path.dirname(os.path.abspath(self._anchoring_log_path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        write_header = not os.path.exists(self._anchoring_log_path) or os.path.getsize(
+            self._anchoring_log_path
+        ) == 0
+        with open(self._anchoring_log_path, "a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=ANCHORING_CSV_COLUMNS)
+            if write_header:
+                w.writeheader()
+            w.writerow(
+                {
+                    "timestamp_iso": ts,
+                    "batch_hash": batch_hash,
+                    "tx_hash": tx_hash,
+                    "success": "1" if success else "0",
+                    "skipped": "1" if skipped else "0",
+                    "error": error,
+                }
+            )
 
     def _append_window_row(self, summary: WindowSummary, z_score: float, is_anomaly: bool) -> None:
         with open(self._csv_path, "a", newline="", encoding="utf-8") as f:
@@ -101,6 +166,8 @@ class OracleState:
             for s in summaries:
                 z_score, is_anomaly = self._ewma_detector.update(s.msgs_per_sec)
                 self._append_window_row(s, z_score=z_score, is_anomaly=is_anomaly)
+                enriched = replace(s, z_score=z_score, is_anomaly=is_anomaly)
+                self._pending_anchor.append(enriched)
                 self.latest_window = s
                 self.latest_z_score = z_score
                 self.latest_is_anomaly = 1 if is_anomaly else 0
@@ -113,9 +180,61 @@ class OracleState:
             for s in self.aggregator.flush():
                 z_score, is_anomaly = self._ewma_detector.update(s.msgs_per_sec)
                 self._append_window_row(s, z_score=z_score, is_anomaly=is_anomaly)
+                enriched = replace(s, z_score=z_score, is_anomaly=is_anomaly)
+                self._pending_anchor.append(enriched)
                 self.latest_window = s
                 self.latest_z_score = z_score
                 self.latest_is_anomaly = 1 if is_anomaly else 0
+
+    def anchor_tick(self) -> None:
+        """One anchoring attempt: batch pending windows, skip if empty, else send tx."""
+        if self._anchor_send is None:
+            return
+        with self._lock:
+            snapshot = list(self._pending_anchor)
+        batch = build_batch(snapshot)
+        if batch is None:
+            with self._lock:
+                self.last_anchor_info = {
+                    "success": False,
+                    "batch_hash": None,
+                    "tx_hash": None,
+                    "skipped": True,
+                    "error": None,
+                    "block_number": None,
+                }
+            self._append_anchoring_log(
+                batch_hash="",
+                tx_hash="",
+                success=False,
+                skipped=True,
+                error="",
+            )
+            return
+        batch_hash, start_ms, end_ms, count = batch
+        try:
+            result = self._anchor_send(batch_hash, start_ms, end_ms, count)
+        except Exception as e:
+            LOG.exception("anchor send failed")
+            result = AnchorResult(None, False, error=str(e))
+        with self._lock:
+            if result.success:
+                del self._pending_anchor[: len(snapshot)]
+            self.last_anchor_info = {
+                "success": result.success,
+                "batch_hash": batch_hash.hex(),
+                "tx_hash": result.tx_hash,
+                "skipped": False,
+                "error": result.error,
+                "block_number": result.block_number,
+            }
+        self._append_anchoring_log(
+            batch_hash=batch_hash.hex(),
+            tx_hash=result.tx_hash or "",
+            success=result.success,
+            skipped=False,
+            error=result.error or "",
+        )
 
     def metrics_payload(self) -> dict[str, Any]:
         with self._lock:
@@ -147,6 +266,14 @@ def _consumer_loop(state: OracleState, message_queue: "queue.Queue[tuple[str, in
             LOG.exception("Error handling message")
 
 
+def _anchor_loop(state: OracleState, interval_sec: float, stop_event: threading.Event) -> None:
+    while not stop_event.wait(interval_sec):
+        try:
+            state.anchor_tick()
+        except Exception:
+            LOG.exception("anchor tick failed")
+
+
 def create_app(
     *,
     start_mqtt: bool = True,
@@ -157,6 +284,12 @@ def create_app(
     ewma_alpha: Optional[float] = None,
     ewma_z_threshold: Optional[float] = None,
     ewma_epsilon: Optional[float] = None,
+    anchor_interval_sec: Optional[float] = None,
+    contract_address: Optional[str] = None,
+    ganache_url: Optional[str] = None,
+    contract_abi_path: Optional[str] = None,
+    anchoring_log_path: Optional[str] = None,
+    anchor_runner: Optional[AnchorSendFn] = None,
 ) -> FastAPI:
     """Build FastAPI app and start background MQTT consumer unless ``start_mqtt=False``."""
     ws = window_sec if window_sec is not None else WINDOW_SEC
@@ -166,6 +299,25 @@ def create_app(
     alpha = ewma_alpha if ewma_alpha is not None else EWMA_ALPHA
     z_threshold = ewma_z_threshold if ewma_z_threshold is not None else Z_THRESHOLD
     epsilon = ewma_epsilon if ewma_epsilon is not None else 1e-6
+    anchor_log_p = anchoring_log_path if anchoring_log_path is not None else ANCHORING_LOG_PATH
+
+    ca = CONTRACT_ADDRESS if contract_address is None else contract_address
+    gu = GANACHE_URL if ganache_url is None else ganache_url
+    ap = CONTRACT_ABI_PATH if contract_abi_path is None else contract_abi_path
+    interval = ANCHOR_INTERVAL_SEC if anchor_interval_sec is None else float(anchor_interval_sec)
+
+    anchor_send: Optional[AnchorSendFn] = None
+    if anchor_runner is not None:
+        anchor_send = anchor_runner
+    elif ca:
+        if not os.path.isfile(ap):
+            LOG.error("CONTRACT_ABI_PATH not found: %s — anchoring disabled", ap)
+        else:
+
+            def _send(bh: bytes, sm: int, em: int, c: int) -> AnchorResult:
+                return send_anchor(gu, ca, ap, bh, sm, em, c)
+
+            anchor_send = _send
 
     q: queue.Queue[tuple[str, int]] = message_queue if message_queue is not None else queue.Queue()
     mqtt_client = None
@@ -180,6 +332,8 @@ def create_app(
         ewma_alpha=alpha,
         ewma_z_threshold=z_threshold,
         ewma_epsilon=epsilon,
+        anchoring_log_path=anchor_log_p,
+        anchor_send=anchor_send,
     )
     stop_consumer = threading.Event()
     consumer_thread = threading.Thread(
@@ -190,13 +344,27 @@ def create_app(
     )
     consumer_thread.start()
 
+    stop_anchor = threading.Event()
+    anchor_thread: Optional[threading.Thread] = None
+    if anchor_send is not None:
+        anchor_thread = threading.Thread(
+            target=_anchor_loop,
+            args=(state, interval, stop_anchor),
+            daemon=True,
+            name="oracle-anchor",
+        )
+        anchor_thread.start()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
             yield
         finally:
             stop_consumer.set()
+            stop_anchor.set()
             consumer_thread.join(timeout=5.0)
+            if anchor_thread is not None:
+                anchor_thread.join(timeout=5.0)
             try:
                 state.flush_windows()
             except Exception:
@@ -217,6 +385,7 @@ def create_app(
     app.state.oracle_state = state
     app.state.message_queue = q
     app.state.stop_consumer = stop_consumer
+    app.state.stop_anchor = stop_anchor
     return app
 
 
