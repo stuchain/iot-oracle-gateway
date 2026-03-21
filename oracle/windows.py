@@ -15,6 +15,8 @@ class WindowSummary:
     msg_count: int
     msgs_per_sec: float
     avg_latency_ms: float
+    z_score: float = 0.0
+    is_anomaly: bool = False
 
 
 class WindowAggregator:
