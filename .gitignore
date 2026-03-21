@@ -4,6 +4,9 @@ __pycache__/
 
 node_modules/
 
+# Local Ganache deploy output (address changes when Ganache restarts)
+contracts/deployments/localhost.json
+
 data/
 outputs/
 plots/

@@ -50,8 +50,29 @@ This is documented steps only; no automated tests are added for this sanity chec
 
 - **simulator/** – IoT producer script(s)
 - **oracle/** – Gateway service (MQTT ingest, windowing, anomaly detection, anchoring)
-- **contracts/** – Hardhat project and Solidity anchor contract (placeholder only; real contract and deploy script in Phase 5)
+- **contracts/** – Hardhat project and `TelemetryAnchor` Solidity contract; deploy with Ganache on port 8545 (see “Deploying TelemetryAnchor” below)
 - **dashboard/** – Streamlit app for metrics
+
+### Deploying TelemetryAnchor (local Ganache)
+
+The oracle (later phases) sends batch hashes to the `TelemetryAnchor` contract on a local chain. **Ganache must be listening on port 8545** before you deploy; if it is not running, Hardhat will fail to connect (e.g. connection refused).
+
+1. **Start Ganache** on **http://127.0.0.1:8545** (default port **8545**):
+   - **CLI:** `npx ganache --port 8545` (or `ganache-cli -p 8545` if you use the legacy package name)
+   - **GUI:** Ganache, create a workspace with **8545** as the server port
+2. **In another terminal**, from the project root:
+
+   ```bash
+   cd contracts
+   npm install
+   npx hardhat compile
+   npx hardhat run scripts/deploy.js --network localhost
+   ```
+
+3. The script prints the deployed address and writes **`contracts/deployments/localhost.json`** (ignored by git) with `contractAddress`, `rpcUrl`, and `chainId`.  
+4. **For the oracle**, point the deployed address (and later the ABI) at your config or env. For example, set **`CONTRACT_ADDRESS`** to the printed address, or keep a local **`oracle/contract.json`** (see Phase 5 anchoring docs) when that file is wired.
+
+**Hardhat network:** `localhost` in [`contracts/hardhat.config.js`](contracts/hardhat.config.js) uses `http://127.0.0.1:8545`, matching Ganache’s default host/port.
 
 ### Simulator
 
