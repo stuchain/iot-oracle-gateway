@@ -74,6 +74,8 @@ The oracle (later phases) sends batch hashes to the `TelemetryAnchor` contract o
 
 **Hardhat network:** `localhost` in [`contracts/hardhat.config.js`](contracts/hardhat.config.js) uses `http://127.0.0.1:8545`, matching Ganache’s default host/port.
 
+**CI (automated deploy check):** On push and pull requests, [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `npm ci`, `hardhat compile`, `hardhat test`, then starts **`npx hardhat node`** in the background (same host/port as above), runs `scripts/deploy.js --network localhost`, and asserts `contracts/deployments/localhost.json` contains a valid `contractAddress`. That replaces the manual “chain running + deploy succeeds” check for regressions; use Ganache or Hardhat node locally when developing.
+
 ### Simulator
 
 Run the telemetry simulator (requires Mosquitto or another MQTT broker):

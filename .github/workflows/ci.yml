@@ -1,0 +1,74 @@
+# Replaces manual "Ganache + deploy" checks from phase-05: local JSON-RPC on :8545,
+# compile, test, deploy TelemetryAnchor, verify localhost.json.
+# Uses Hardhat's built-in node (same port/network as hardhat.config localhost).
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt httpx
+
+      - name: Run pytest
+        run: python -m pytest
+
+  contracts-e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: contracts/package-lock.json
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Compile Solidity
+        run: npx hardhat compile
+
+      - name: Run Hardhat tests
+        run: npx hardhat test
+
+      - name: E2E — local chain, deploy, verify artifact
+        run: |
+          set -e
+          npx hardhat node > /tmp/hardhat-node.log 2>&1 &
+          NODE_PID=$!
+          sleep 10
+          npx hardhat run scripts/deploy.js --network localhost
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const p = path.join("deployments", "localhost.json");
+          if (!fs.existsSync(p)) {
+            console.error("missing", p);
+            process.exit(1);
+          }
+          const j = JSON.parse(fs.readFileSync(p, "utf8"));
+          if (!/^0x[0-9a-fA-F]{40}$/.test(j.contractAddress)) {
+            console.error("invalid contractAddress", j);
+            process.exit(1);
+          }
+          console.log("E2E OK:", j.contractAddress);
+          NODE
+          kill $NODE_PID 2>/dev/null || true
