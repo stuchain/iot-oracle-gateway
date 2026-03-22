@@ -51,7 +51,7 @@ This is documented steps only; no automated tests are added for this sanity chec
 - **simulator/** – IoT producer script(s)
 - **oracle/** – Gateway service (MQTT ingest, windowing, anomaly detection, anchoring)
 - **contracts/** – Hardhat project and `TelemetryAnchor` Solidity contract; deploy with Ganache on port 8545 (see “Deploying TelemetryAnchor” below)
-- **dashboard/** – Streamlit app for metrics
+- **dashboard/** – Streamlit UI for oracle metrics and simulator parameters. With the oracle listening on port **8000** (default), run: `streamlit run dashboard/app.py`. Set **`ORACLE_URL`** if the API is elsewhere.
 
 ### Deploying TelemetryAnchor (local Ganache)
 

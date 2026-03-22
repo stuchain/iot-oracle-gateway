@@ -1,5 +1,7 @@
 paho-mqtt
 pandas
+requests
+streamlit-autorefresh
 web3
 fastapi
 uvicorn
