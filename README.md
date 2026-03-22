@@ -53,6 +53,22 @@ This is documented steps only; no automated tests are added for this sanity chec
 - **contracts/** – Hardhat project and `TelemetryAnchor` Solidity contract; deploy with Ganache on port 8545 (see “Deploying TelemetryAnchor” below)
 - **dashboard/** – Streamlit UI for oracle metrics and simulator parameters. With the oracle listening on port **8000** (default), run: `streamlit run dashboard/app.py`. Set **`ORACLE_URL`** if the API is elsewhere.
 
+### Using the dashboard
+
+The dashboard **does not** start or stop the simulator (or Mosquitto); it only reads oracle metrics and can write simulator settings to disk.
+
+1. Start **Mosquitto** (see [Running Mosquitto](#running-mosquitto)).
+2. Start the **oracle** in one terminal: `python -m oracle.service` (or your usual command; default HTTP **8000**).
+3. Start the **dashboard** in another terminal: `streamlit run dashboard/app.py`.
+4. In the sidebar, set **N_DEVICES**, **INTERVAL_SEC**, and optional burst fields, then click **Save config**. This creates or updates **`config/sim_config.json`** at the repo root (override with env **`SIM_CONFIG_PATH`** if needed).
+5. Start the **simulator** in a **third** terminal from the repo root (after saving):
+
+   ```bash
+   python -m simulator.iot_simulator --config config/sim_config.json
+   ```
+
+   The simulator reads that JSON; you can still use env vars or CLI flags for other options (e.g. `MQTT_HOST`, `HMAC_SECRET`). Without `--config`, the simulator uses environment defaults only.
+
 ### Deploying TelemetryAnchor (local Ganache)
 
 The oracle (later phases) sends batch hashes to the `TelemetryAnchor` contract on a local chain. **Ganache must be listening on port 8545** before you deploy; if it is not running, Hardhat will fail to connect (e.g. connection refused).
@@ -84,7 +100,7 @@ Run the telemetry simulator (requires Mosquitto or another MQTT broker):
 python -m simulator.iot_simulator
 ```
 
-Config via env or CLI: `N_DEVICES`, `INTERVAL_SEC`, `MQTT_HOST`, `MQTT_PORT`, `HMAC_SECRET`. Subscribe to telemetry with (see also "Running Mosquitto" above):
+Config via env or CLI: `N_DEVICES`, `INTERVAL_SEC`, `MQTT_HOST`, `MQTT_PORT`, `HMAC_SECRET`. To use parameters saved from the dashboard, pass **`--config config/sim_config.json`** (see [Using the dashboard](#using-the-dashboard)). Subscribe to telemetry with (see also "Running Mosquitto" above):
 
 ```bash
 mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v

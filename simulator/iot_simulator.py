@@ -37,9 +37,38 @@ def _bool(key: str, default: bool) -> bool:
     return str(val).lower() in ("1", "true", "yes")
 
 
+def _apply_sim_config_json(path: str, ns: argparse.Namespace) -> None:
+    """Apply dashboard-written JSON (N_DEVICES, INTERVAL_SEC, BURST_*) onto parsed namespace."""
+    with open(path, encoding="utf-8") as f:
+        j = json.load(f)
+    if "N_DEVICES" in j:
+        ns.devices = int(j["N_DEVICES"])
+    if "INTERVAL_SEC" in j:
+        ns.interval = float(j["INTERVAL_SEC"])
+    if "BURST_ENABLED" in j:
+        v = j["BURST_ENABLED"]
+        if isinstance(v, bool):
+            ns.burst_enabled = v
+        else:
+            ns.burst_enabled = str(v).lower() in ("1", "true", "yes")
+    if "BURST_START_SEC" in j:
+        ns.burst_start = int(j["BURST_START_SEC"])
+    if "BURST_DURATION_SEC" in j:
+        ns.burst_duration = int(j["BURST_DURATION_SEC"])
+    if "BURST_MULTIPLIER" in j:
+        ns.burst_multiplier = float(j["BURST_MULTIPLIER"])
+
+
 def get_config():
     """Parse env with optional argparse override. Returns namespace with N_DEVICES, INTERVAL_SEC, MQTT, HMAC_SECRET, and burst options."""
     parser = argparse.ArgumentParser(description="IoT telemetry simulator")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="JSON file from the dashboard (e.g. config/sim_config.json): N_DEVICES, INTERVAL_SEC, BURST_*",
+    )
     parser.add_argument("--devices", type=int, default=_int("N_DEVICES", 5), help="Number of devices (env: N_DEVICES)")
     parser.add_argument("--interval", type=float, default=float(os.getenv("INTERVAL_SEC", "1")), help="Tick interval seconds (env: INTERVAL_SEC)")
     parser.add_argument("--host", type=str, default=os.getenv("MQTT_HOST", "localhost"), help="MQTT broker host (env: MQTT_HOST)")
@@ -49,7 +78,10 @@ def get_config():
     parser.add_argument("--burst-start", type=int, default=_int("BURST_START_SEC", 60), help="Burst start time in seconds (env: BURST_START_SEC)")
     parser.add_argument("--burst-duration", type=int, default=_int("BURST_DURATION_SEC", 20), help="Burst duration in seconds (env: BURST_DURATION_SEC)")
     parser.add_argument("--burst-multiplier", type=float, default=float(os.getenv("BURST_MULTIPLIER", "5")), help="Interval divisor during burst (env: BURST_MULTIPLIER)")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.config:
+        _apply_sim_config_json(args.config, args)
+    return args
 
 
 def compute_effective_interval(

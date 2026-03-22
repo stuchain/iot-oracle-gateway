@@ -1,8 +1,9 @@
 """Tests for IoT simulator: one tick, correct topic and payload keys; effective_interval for burst."""
+import argparse
 import json
 from unittest.mock import MagicMock
 
-from simulator.iot_simulator import compute_effective_interval, run_tick
+from simulator.iot_simulator import _apply_sim_config_json, compute_effective_interval, run_tick
 
 # Fixed burst params for deterministic tests
 INTERVAL_SEC = 1.0
@@ -75,3 +76,36 @@ def test_effective_interval_burst_disabled_always_normal():
         70, INTERVAL_SEC, False, BURST_START_SEC, BURST_DURATION_SEC, BURST_MULTIPLIER
     )
     assert got == INTERVAL_SEC
+
+
+def test_apply_sim_config_json_overrides_namespace(tmp_path):
+    """Dashboard JSON keys map onto argparse namespace used by the simulator."""
+    path = tmp_path / "sim_config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "N_DEVICES": 3,
+                "INTERVAL_SEC": 2.5,
+                "BURST_ENABLED": True,
+                "BURST_START_SEC": 10,
+                "BURST_DURATION_SEC": 15,
+                "BURST_MULTIPLIER": 4.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    ns = argparse.Namespace(
+        devices=1,
+        interval=1.0,
+        burst_enabled=False,
+        burst_start=60,
+        burst_duration=20,
+        burst_multiplier=5.0,
+    )
+    _apply_sim_config_json(str(path), ns)
+    assert ns.devices == 3
+    assert ns.interval == 2.5
+    assert ns.burst_enabled is True
+    assert ns.burst_start == 10
+    assert ns.burst_duration == 15
+    assert ns.burst_multiplier == 4.0
