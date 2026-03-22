@@ -1,4 +1,9 @@
-"""Streamlit dashboard: oracle /metrics polling and simulator config (config/sim_config.json)."""
+"""Streamlit dashboard: oracle /metrics polling, simulator config, and CSV window charts.
+
+Telemetry CSV (default ``data/telemetry_windows.csv``) is re-read on every Streamlit rerun,
+including the periodic auto-refresh and the "Refresh metrics now" button—no separate cache,
+so new oracle rows appear after the next rerun.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+import pandas as pd
 import requests
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
@@ -17,6 +23,7 @@ LOG = logging.getLogger(__name__)
 ORACLE_URL = os.getenv("ORACLE_URL", "http://127.0.0.1:8000").rstrip("/")
 METRICS_TIMEOUT_SEC = 2.0
 AUTO_REFRESH_MS = 5000
+Z_THRESHOLD = float(os.getenv("Z_THRESHOLD", "3.0"))
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_SIM_CONFIG = _REPO_ROOT / "config" / "sim_config.json"
@@ -65,6 +72,34 @@ def fetch_metrics() -> tuple[Optional[dict[str, Any]], Optional[str]]:
         return r.json(), None
     except requests.RequestException as e:
         return None, f"Cannot reach oracle at {url}: {e}"
+
+
+def telemetry_csv_path() -> Path:
+    """Default matches oracle ``DATA_DIR`` / ``telemetry_windows.csv``."""
+    override = os.getenv("TELEMETRY_CSV_PATH")
+    if override:
+        return Path(override)
+    data_dir = os.getenv("DATA_DIR", "data")
+    return _REPO_ROOT / data_dir / "telemetry_windows.csv"
+
+
+def load_telemetry_csv() -> tuple[Optional[pd.DataFrame], Optional[str]]:
+    """Load window CSV; return (df, error_message). Error set if unreadable or missing columns."""
+    path = telemetry_csv_path()
+    if not path.is_file():
+        return None, f"CSV not found: `{path}` (set TELEMETRY_CSV_PATH or run the oracle to create it)."
+    try:
+        df = pd.read_csv(path)
+    except Exception as e:
+        LOG.warning("Failed to read telemetry CSV %s: %s", path, e)
+        return None, f"Could not read CSV: {e}"
+    if df.empty:
+        return df, None
+    required = {"window_end_ms", "msgs_per_sec", "z_score"}
+    missing = required - set(df.columns)
+    if missing:
+        return None, f"CSV missing columns {sorted(missing)}; expected at least {sorted(required)}."
+    return df, None
 
 
 st.title("IoT Oracle Gateway")
@@ -180,6 +215,29 @@ with z_col:
     st.metric("Z-score", zv)
 with anom_col:
     st.metric("Is anomaly (0/1)", anom)
+
+st.subheader("Window history (telemetry_windows.csv)")
+st.caption(
+    f"Source: `{telemetry_csv_path()}`. Reloads on every rerun (auto-refresh ~{AUTO_REFRESH_MS // 1000}s). "
+    f"Anomaly threshold Z_THRESHOLD={Z_THRESHOLD} (env, match oracle)."
+)
+
+df_csv, csv_err = load_telemetry_csv()
+if csv_err:
+    st.warning(csv_err)
+elif df_csv is None:
+    st.info("No CSV data.")
+elif df_csv.empty:
+    st.info("CSV has no data rows yet.")
+else:
+    tdf = df_csv.copy()
+    tdf["t"] = pd.to_datetime(tdf["window_end_ms"], unit="ms", utc=True)
+    st.markdown("**Throughput (msgs/s) over time**")
+    st.line_chart(tdf.set_index("t")[["msgs_per_sec"]])
+    st.markdown("**Z-score over time** (second series = threshold)")
+    zplot = tdf.set_index("t")[["z_score"]].copy()
+    zplot["threshold"] = Z_THRESHOLD
+    st.line_chart(zplot)
 
 st.subheader("Anchoring")
 if data is None:

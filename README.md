@@ -69,6 +69,8 @@ The dashboard **does not** start or stop the simulator (or Mosquitto); it only r
 
    The simulator reads that JSON; you can still use env vars or CLI flags for other options (e.g. `MQTT_HOST`, `HMAC_SECRET`). Without `--config`, the simulator uses environment defaults only.
 
+6. **Charts** (throughput and z-score over time) read **`data/telemetry_windows.csv`** on every Streamlit rerun (including auto-refresh). Override with **`TELEMETRY_CSV_PATH`** or **`DATA_DIR`** if needed; **`Z_THRESHOLD`** in the environment should match the oracle for the threshold line.
+
 ### Deploying TelemetryAnchor (local Ganache)
 
 The oracle (later phases) sends batch hashes to the `TelemetryAnchor` contract on a local chain. **Ganache must be listening on port 8545** before you deploy; if it is not running, Hardhat will fail to connect (e.g. connection refused).
