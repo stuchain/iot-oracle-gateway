@@ -101,6 +101,7 @@ class OracleState:
             "block_number": None,
         }
         self._ensure_csv_header()
+        self._log_every_n = 100
 
     def _ensure_csv_header(self) -> None:
         parent = os.path.dirname(os.path.abspath(self._csv_path))
@@ -171,6 +172,8 @@ class OracleState:
                 self.rejected_count += 1
                 return
             self.verified_count += 1
+            if self.verified_count % self._log_every_n == 0:
+                LOG.info("Verified %d telemetry messages (logging every %d)", self.verified_count, self._log_every_n)
             summaries = self.aggregator.add_message(parsed, ingest_ts_ms)
             for s in summaries:
                 z_score, is_anomaly = self._ewma_detector.update(s.msgs_per_sec)
@@ -227,7 +230,7 @@ class OracleState:
         try:
             result = self._anchor_send(batch_hash, start_ms, end_ms, count)
         except Exception as e:
-            LOG.exception("anchor send failed")
+            LOG.warning("anchor send failed: %s", e)
             result = AnchorResult(None, False, error=str(e))
         with self._lock:
             if result.success:

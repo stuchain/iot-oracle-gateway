@@ -16,6 +16,8 @@ LOG = logging.getLogger(__name__)
 
 TOPIC_PATTERN = "iot/devices/{device_id}/telemetry"
 
+CONNECT_RETRY_SLEEP_SEC = 3.0
+
 # Sensor ranges (doc: temp 20-30°C, humidity 40-80, power 10-100)
 TEMP_RANGE = (20.0, 30.0)
 HUMIDITY_RANGE = (40.0, 80.0)
@@ -104,6 +106,34 @@ def device_ids(n: int) -> list[str]:
     return [f"dev-{i:02d}" for i in range(1, n + 1)]
 
 
+def _mqtt_connect_with_retry(client, host: str, port: int) -> None:
+    """Block until connected to the broker (retries if broker is not up yet)."""
+    while True:
+        try:
+            client.connect(host, port)
+            return
+        except OSError as e:
+            LOG.warning(
+                "MQTT connect failed to %s:%s: %s — retry in %.0fs",
+                host,
+                port,
+                e,
+                CONNECT_RETRY_SLEEP_SEC,
+            )
+            time.sleep(CONNECT_RETRY_SLEEP_SEC)
+
+
+def _mqtt_ensure_connected(client, host: str, port: int) -> None:
+    """If the session dropped, reconnect before publishing."""
+    while not client.is_connected():
+        LOG.warning("Reconnecting to MQTT broker at %s:%s ...", host, port)
+        try:
+            client.reconnect()
+        except Exception as e:
+            LOG.warning("MQTT reconnect failed: %s — retry in %.0fs", e, CONNECT_RETRY_SLEEP_SEC)
+            time.sleep(CONNECT_RETRY_SLEEP_SEC)
+
+
 def run_tick(client, device_ids_list: list[str], secret: str, host: str, port: int) -> None:
     """Publish one telemetry message per device. Client must be connected (or a mock)."""
     secret_bytes = secret.encode("utf-8") if isinstance(secret, str) else secret
@@ -132,7 +162,13 @@ def main() -> None:
         LOG.error("paho-mqtt required; pip install paho-mqtt")
         raise
     client = mqtt.Client()
-    client.connect(cfg.host, cfg.port)
+
+    def on_disconnect(_client, _userdata, rc):
+        if rc != 0:
+            LOG.warning("MQTT disconnected unexpectedly (rc=%s)", rc)
+
+    client.on_disconnect = on_disconnect
+    _mqtt_connect_with_retry(client, cfg.host, cfg.port)
     client.loop_start()
     tick = 0
     in_burst = False
@@ -149,6 +185,7 @@ def main() -> None:
                 LOG.info("Burst ended")
             in_burst = now_in_burst
 
+            _mqtt_ensure_connected(client, cfg.host, cfg.port)
             run_tick(client, devices, cfg.secret, cfg.host, cfg.port)
             tick += 1
             if tick % 10 == 0 or tick == 1:

@@ -33,10 +33,13 @@ def test_start_mqtt_consumer_subscribes_and_on_message_enqueues(mock_client_cls,
     mock_client_cls.assert_called_once()
     mock_client.connect.assert_called_once_with("test-host", 9999)
     mock_client.subscribe.assert_called_once_with(TELEMETRY_TOPIC)
-    mock_thread_cls.assert_called_once()
-    mock_thread_cls.return_value.start.assert_called_once()
+    assert mock_thread_cls.call_count == 2
+    assert mock_thread_cls.call_args_list[0][1]["name"] == "oracle-mqtt-loop"
+    assert mock_thread_cls.call_args_list[1][1]["name"] == "oracle-mqtt-reconnect"
+    assert mock_thread_cls.return_value.start.call_count == 2
 
     assert callable(mock_client.on_message)
+    assert callable(mock_client.on_disconnect)
 
     fake_msg = MagicMock()
     fake_msg.payload = b'{"ok":true}'

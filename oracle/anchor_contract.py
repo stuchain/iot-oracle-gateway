@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
 from web3 import Web3
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -62,4 +65,5 @@ def send_anchor(
             error=None,
         )
     except Exception as e:
+        LOG.warning("anchor transaction failed: %s", e)
         return AnchorResult(None, False, error=str(e))

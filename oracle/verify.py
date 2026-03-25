@@ -7,11 +7,14 @@ payload *excluding* the `hmac` field. This module verifies the same scheme.
 from __future__ import annotations
 
 import hashlib
+import logging
 import hmac as hmac_lib
 import json
 from typing import Any, Optional
 
 from oracle.json_utils import canonical_dumps
+
+LOG = logging.getLogger(__name__)
 
 
 def verify_payload(payload: str | dict[str, Any], secret: bytes) -> tuple[Optional[dict[str, Any]], bool]:
@@ -30,7 +33,8 @@ def verify_payload(payload: str | dict[str, Any], secret: bytes) -> tuple[Option
     if isinstance(payload, str):
         try:
             parsed: dict[str, Any] = json.loads(payload)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            LOG.debug("Invalid JSON in telemetry payload: %s", e)
             return None, False
     elif isinstance(payload, dict):
         parsed = payload

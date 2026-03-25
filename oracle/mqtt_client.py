@@ -16,6 +16,9 @@ LOG = logging.getLogger(__name__)
 
 TELEMETRY_TOPIC = "iot/devices/+/telemetry"
 
+RECONNECT_SLEEP_SEC = 5.0
+CONNECT_RETRY_SLEEP_SEC = 3.0
+
 
 def make_on_message_handler(message_queue: "queue.Queue[tuple[str, int]]"):
     """Build paho on_message callback that enqueues decoded payload + ingest time."""
@@ -26,6 +29,43 @@ def make_on_message_handler(message_queue: "queue.Queue[tuple[str, int]]"):
         message_queue.put((payload_str, ingest_ts_ms))
 
     return on_message
+
+
+def _on_disconnect_factory():
+    def on_disconnect(_client: mqtt.Client, _userdata: Any, rc: int) -> None:
+        if rc != 0:
+            LOG.warning("MQTT disconnected unexpectedly (rc=%s)", rc)
+
+    return on_disconnect
+
+
+def _connect_with_retry(client: mqtt.Client, host: str, port: int) -> None:
+    """Block until initial TCP connect succeeds (broker may start after oracle)."""
+    while True:
+        try:
+            client.connect(host, port)
+            return
+        except OSError as e:
+            LOG.warning(
+                "MQTT connect failed to %s:%s: %s — retry in %.0fs",
+                host,
+                port,
+                e,
+                CONNECT_RETRY_SLEEP_SEC,
+            )
+            time.sleep(CONNECT_RETRY_SLEEP_SEC)
+
+
+def _reconnect_watch_loop(client: mqtt.Client, host: str, port: int) -> None:
+    """If the broker drops, retry reconnect indefinitely with sleep between attempts."""
+    while True:
+        time.sleep(RECONNECT_SLEEP_SEC)
+        if not client.is_connected():
+            LOG.warning("MQTT not connected; reconnecting to %s:%s ...", host, port)
+            try:
+                client.reconnect()
+            except Exception as e:
+                LOG.warning("MQTT reconnect failed: %s (retry in %.0fs)", e, RECONNECT_SLEEP_SEC)
 
 
 def start_mqtt_consumer(
@@ -49,16 +89,21 @@ def start_mqtt_consumer(
 
     client = mqtt.Client()
     client.on_message = make_on_message_handler(q)
+    client.on_disconnect = _on_disconnect_factory()
 
-    try:
-        client.connect(h, p)
-    except OSError as e:
-        LOG.error("MQTT connect failed to %s:%s: %s", h, p, e)
-        raise
+    _connect_with_retry(client, h, p)
 
     client.subscribe(TELEMETRY_TOPIC)
 
     loop_thread = threading.Thread(target=client.loop_forever, daemon=True, name="oracle-mqtt-loop")
     loop_thread.start()
+
+    reconnect_thread = threading.Thread(
+        target=_reconnect_watch_loop,
+        args=(client, h, p),
+        daemon=True,
+        name="oracle-mqtt-reconnect",
+    )
+    reconnect_thread.start()
 
     return client, q, loop_thread
