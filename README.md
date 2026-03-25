@@ -34,6 +34,69 @@ Run from the **repository root** unless noted. Use the **same `HMAC_SECRET`** fo
 
 **Reproducible experiments (Phase 7):** with services up, you can run **`scripts/run_experiment_baseline.sh`** or **`scripts/run_experiment_burst.sh`** (bash/Git Bash), or **`scripts/run_experiment_baseline.ps1`** / **`scripts/run_experiment_burst.ps1`** on Windows, then **`python scripts/plot_results.py`** to generate plots under **`plots/`**.
 
+## Run examples and interpreting results
+
+Once **Mosquitto** and the **oracle** are running (and optional **Ganache** + contract if you care about anchoring), you can drive the simulator and watch the same numbers in the **CSV**, **`/metrics`**, and optionally the **dashboard**.
+
+### Baseline (steady traffic)
+
+I run the simulator for about **2–3 minutes** with eight devices and a 1-second tick, burst off, so the pipeline should look “quiet”: roughly stable throughput and no anomaly flags.
+
+**Linux / macOS / Git Bash:**
+
+```bash
+N_DEVICES=8 INTERVAL_SEC=1 BURST_ENABLED=false python -m simulator.iot_simulator
+```
+
+**Windows (cmd):**
+
+```bat
+set N_DEVICES=8
+set INTERVAL_SEC=1
+set BURST_ENABLED=false
+python -m simulator.iot_simulator
+```
+
+You can also use **`scripts/run_experiment_baseline.sh`** or **`scripts/run_experiment_baseline.ps1`** (defaults to ~3 minutes) to avoid typing env vars each time.
+
+**Where to look:** **`data/telemetry_windows.csv`** accumulates one row per closed window; **`messages per second`** and **`z_score`** should stay fairly flat, and **`is_anomaly`** should stay **0** in normal conditions. **`curl http://127.0.0.1:8000/metrics`** (or the Streamlit dashboard) shows the latest window and counts in JSON.
+
+### Burst (spike + anomaly)
+
+For a burst window, I keep the same **N_DEVICES** and **INTERVAL_SEC** but enable burst parameters so the simulator publishes faster for a short interval (here: burst starting at **60 s**, lasting **20 s**):
+
+**Linux / macOS / Git Bash:**
+
+```bash
+N_DEVICES=8 INTERVAL_SEC=1 \
+  BURST_ENABLED=1 BURST_START_SEC=60 BURST_DURATION_SEC=20 BURST_MULTIPLIER=5 \
+  python -m simulator.iot_simulator
+```
+
+**Windows (cmd):**
+
+```bat
+set N_DEVICES=8
+set INTERVAL_SEC=1
+set BURST_ENABLED=1
+set BURST_START_SEC=60
+set BURST_DURATION_SEC=20
+set BURST_MULTIPLIER=5
+python -m simulator.iot_simulator
+```
+
+Or run **`scripts/run_experiment_burst.sh`** / **`scripts/run_experiment_burst.ps1`** for a timed run.
+
+**What I expect:** during the burst, **`msgs_per_sec`** jumps in **`telemetry_windows.csv`**, **`z_score`** rises, and **`is_anomaly`** should be **1** in at least one window once the EWMA catches up (exact timing depends on **`WINDOW_SEC`** and **`Z_THRESHOLD`**). The **dashboard** charts make this easy to see: throughput spikes and the z-score line crosses the horizontal threshold.
+
+### Reading outputs (quick)
+
+- **Dashboard:** throughput over time and z-score vs **`Z_THRESHOLD`** (set **`Z_THRESHOLD`** in the dashboard env to match the oracle).
+- **CSV (`telemetry_windows.csv`):** each row is one window — check **`window_start_ms` / `window_end_ms`**, **`msgs_per_sec`**, **`z_score`**, **`is_anomaly`**.
+- **`anchoring_log.csv`:** if anchoring is enabled, each row has **`tx_hash`**, **`batch_hash`**, and **`success`**; **failed** attempts still have a row with **`success=0`** and often an empty **`tx_hash`**.
+
+**For the report:** I generate figures with **`python scripts/plot_results.py`** (reads the telemetry CSV, writes **`plots/throughput.png`** and **`plots/z_score.png`**) and cite **one or two `tx_hash` values** from **`anchoring_log.csv`** when I need on-chain evidence.
+
 ## Configuration reference
 
 Values load from the environment (and **`.env`** via `python-dotenv` in the oracle). Defaults below match [`oracle/config.py`](oracle/config.py) unless stated.
