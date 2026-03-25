@@ -94,6 +94,16 @@ The oracle (later phases) sends batch hashes to the `TelemetryAnchor` contract o
 
 **CI (automated deploy check):** On push and pull requests, [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `npm ci`, `hardhat compile`, `hardhat test`, then starts **`npx hardhat node`** in the background (same host/port as above), runs `scripts/deploy.js --network localhost`, and asserts `contracts/deployments/localhost.json` contains a valid `contractAddress`. That replaces the manual “chain running + deploy succeeds” check for regressions; use Ganache or Hardhat node locally when developing.
 
+### Anchoring evidence for the report
+
+After runs with on-chain anchoring enabled, the oracle appends one row per anchoring attempt to **`data/anchoring_log.csv`** (override with **`ANCHORING_LOG_PATH`** or **`DATA_DIR`**). Columns include **`timestamp_iso`**, **`batch_hash`**, **`tx_hash`**, **`success`** (`1`/`0`), **`skipped`**, **`start_ms`**, **`end_ms`**, **`count`** (window range covered by the batch), and **`error`**. Failed sends are still logged with **`success=0`** and an empty **`tx_hash`** when no hash was returned.
+
+**For the report,** copy one or two **`tx_hash`** values from `anchoring_log.csv` and optionally show a short receipt or event snippet. To inspect on a local node (Ganache / Hardhat):
+
+- **Ganache GUI:** open the **Transactions** tab and find the tx by hash.
+- **JSON-RPC:** `eth_getTransactionReceipt` with your RPC URL (e.g. `curl` to `http://127.0.0.1:8545`) and decode **`logs`** for the **`Anchored`** event (see `TelemetryAnchor.sol`: `Anchored(batchHash, startMs, endMs, count, submitter)`).
+- **Hardhat console** (from **`contracts/`**): `npx hardhat console --network localhost`, then use `ethers` to `getTransactionReceipt(txHash)` and parse logs with the contract ABI, or call view helpers on the contract if you add them.
+
 ### Simulator
 
 Run the telemetry simulator (requires Mosquitto or another MQTT broker):

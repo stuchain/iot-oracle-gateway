@@ -52,6 +52,9 @@ ANCHORING_CSV_COLUMNS = [
     "tx_hash",
     "success",
     "skipped",
+    "start_ms",
+    "end_ms",
+    "count",
     "error",
 ]
 
@@ -116,6 +119,9 @@ class OracleState:
         success: bool,
         skipped: bool,
         error: str,
+        start_ms: str = "",
+        end_ms: str = "",
+        count: str = "",
     ) -> None:
         ts = datetime.now(timezone.utc).isoformat()
         parent = os.path.dirname(os.path.abspath(self._anchoring_log_path))
@@ -135,6 +141,9 @@ class OracleState:
                     "tx_hash": tx_hash,
                     "success": "1" if success else "0",
                     "skipped": "1" if skipped else "0",
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "count": count,
                     "error": error,
                 }
             )
@@ -209,6 +218,9 @@ class OracleState:
                 success=False,
                 skipped=True,
                 error="",
+                start_ms="",
+                end_ms="",
+                count="",
             )
             return
         batch_hash, start_ms, end_ms, count = batch
@@ -234,6 +246,9 @@ class OracleState:
             success=result.success,
             skipped=False,
             error=result.error or "",
+            start_ms=str(start_ms),
+            end_ms=str(end_ms),
+            count=str(count),
         )
 
     def metrics_payload(self) -> dict[str, Any]:
