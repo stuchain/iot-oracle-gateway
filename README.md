@@ -11,6 +11,16 @@ This project is an end-to-end **IoT telemetry pipeline** for coursework and demo
 - **Ganache** (CLI or GUI) for local Ethereum on port **8545**
 - **Mosquitto** (or another MQTT broker) on port **1883** by default
 
+## Testing
+
+From the **repository root**, with dev dependencies installed (`pip install -r requirements.txt`):
+
+```bash
+python -m pytest
+```
+
+Test modules live under **`tests/`** (oracle, simulator, contracts helpers, dashboard smoke checks, and plot script checks). Use `python -m pytest tests/ -q` for a quieter summary.
+
 ## How to run (ordered)
 
 Run from the **repository root** unless noted. Use the **same `HMAC_SECRET`** for the simulator and oracle.
