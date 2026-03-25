@@ -3,7 +3,12 @@ import argparse
 import json
 from unittest.mock import MagicMock
 
-from simulator.iot_simulator import _apply_sim_config_json, compute_effective_interval, run_tick
+from simulator.iot_simulator import (
+    _apply_sim_config_json,
+    _parse_max_runtime_opt,
+    compute_effective_interval,
+    run_tick,
+)
 
 # Fixed burst params for deterministic tests
 INTERVAL_SEC = 1.0
@@ -109,3 +114,11 @@ def test_apply_sim_config_json_overrides_namespace(tmp_path):
     assert ns.burst_start == 10
     assert ns.burst_duration == 15
     assert ns.burst_multiplier == 4.0
+
+
+def test_parse_max_runtime_opt():
+    assert _parse_max_runtime_opt(None) is None
+    assert _parse_max_runtime_opt("") is None
+    assert _parse_max_runtime_opt("0") is None
+    assert _parse_max_runtime_opt("-1") is None
+    assert _parse_max_runtime_opt("10") == 10.0

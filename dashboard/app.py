@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -30,6 +32,26 @@ _DEFAULT_SIM_CONFIG = _REPO_ROOT / "config" / "sim_config.json"
 SIM_CONFIG_PATH = Path(os.getenv("SIM_CONFIG_PATH", str(_DEFAULT_SIM_CONFIG)))
 
 st.set_page_config(page_title="IoT Oracle Dashboard", layout="wide")
+
+if "sim_proc" not in st.session_state:
+    st.session_state.sim_proc = None
+
+
+def _popen_simulator(cmd: list[str]) -> subprocess.Popen:
+    kwargs: dict = {"cwd": str(_REPO_ROOT)}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+    return subprocess.Popen(cmd, **kwargs)
+
+
+def _simulator_running() -> bool:
+    proc = st.session_state.sim_proc
+    if proc is None:
+        return False
+    if proc.poll() is not None:
+        st.session_state.sim_proc = None
+        return False
+    return True
 
 
 def _dash(v: Any) -> str:
@@ -112,8 +134,7 @@ cfg = load_sim_config()
 with st.sidebar:
     st.header("Simulator parameters")
     st.caption(
-        "Save writes **`config/sim_config.json`** (repo root). Run the simulator in another terminal; "
-        "this app does not start or stop it."
+        "Save writes **`config/sim_config.json`**. Use **Start simulator** after saving; logs appear in a separate console window."
     )
     n_devices = st.number_input(
         "N_DEVICES",
@@ -154,6 +175,15 @@ with st.sidebar:
         value=float(cfg.get("BURST_MULTIPLIER", 5.0)),
         step=0.1,
     )
+    max_runtime_sec = st.number_input(
+        "Max runtime (seconds, 0 = run until Stop)",
+        min_value=0.0,
+        max_value=86400.0,
+        value=0.0,
+        step=1.0,
+        key="dash_max_runtime_sec",
+        help="Passed to the simulator as --max-runtime-sec when starting from here.",
+    )
     st.text_input("ORACLE_URL (read-only)", value=ORACLE_URL, disabled=True)
     st.text_input("Config file path (read-only)", value=str(SIM_CONFIG_PATH), disabled=True)
 
@@ -172,6 +202,49 @@ with st.sidebar:
         except OSError as e:
             LOG.exception("Failed to write sim config")
             st.warning(f"Could not write config file: {e}")
+
+    st.subheader("Simulator run")
+    running = _simulator_running()
+    st.write("**Status:** Running" if running else "**Status:** Stopped")
+
+    start_col, stop_col = st.columns(2)
+    with start_col:
+        if st.button("Start simulator", type="primary"):
+            if _simulator_running():
+                st.warning("Simulator is already running. Stop it first or use the other console.")
+            elif not SIM_CONFIG_PATH.is_file():
+                st.warning(f"Save config first (missing `{SIM_CONFIG_PATH}`).")
+            else:
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "simulator.iot_simulator",
+                    "--config",
+                    str(SIM_CONFIG_PATH),
+                ]
+                if max_runtime_sec > 0:
+                    cmd.extend(["--max-runtime-sec", str(max_runtime_sec)])
+                try:
+                    st.session_state.sim_proc = _popen_simulator(cmd)
+                    st.success("Simulator started.")
+                except OSError as e:
+                    LOG.exception("Failed to start simulator")
+                    st.error(f"Could not start simulator: {e}")
+    with stop_col:
+        if st.button("Stop simulator"):
+            proc = st.session_state.sim_proc
+            if proc is None or proc.poll() is not None:
+                st.session_state.sim_proc = None
+                st.info("Simulator was not running.")
+            else:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=3)
+                st.session_state.sim_proc = None
+                st.success("Simulator stopped.")
 
     if st.button("Refresh metrics now"):
         st.rerun()

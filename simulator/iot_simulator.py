@@ -39,6 +39,16 @@ def _bool(key: str, default: bool) -> bool:
     return str(val).lower() in ("1", "true", "yes")
 
 
+def _parse_max_runtime_opt(s: str | None) -> float | None:
+    if s is None or str(s).strip() == "":
+        return None
+    try:
+        v = float(s)
+        return v if v > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _apply_sim_config_json(path: str, ns: argparse.Namespace) -> None:
     """Apply dashboard-written JSON (N_DEVICES, INTERVAL_SEC, BURST_*) onto parsed namespace."""
     with open(path, encoding="utf-8") as f:
@@ -80,6 +90,14 @@ def get_config():
     parser.add_argument("--burst-start", type=int, default=_int("BURST_START_SEC", 60), help="Burst start time in seconds (env: BURST_START_SEC)")
     parser.add_argument("--burst-duration", type=int, default=_int("BURST_DURATION_SEC", 20), help="Burst duration in seconds (env: BURST_DURATION_SEC)")
     parser.add_argument("--burst-multiplier", type=float, default=float(os.getenv("BURST_MULTIPLIER", "5")), help="Interval divisor during burst (env: BURST_MULTIPLIER)")
+    parser.add_argument(
+        "--max-runtime-sec",
+        type=_parse_max_runtime_opt,
+        default=_parse_max_runtime_opt(os.getenv("MAX_RUNTIME_SEC")),
+        dest="max_runtime_sec",
+        metavar="SEC",
+        help="Exit after this many seconds (env: MAX_RUNTIME_SEC). Omit or 0 for unlimited.",
+    )
     args = parser.parse_args()
     if args.config:
         _apply_sim_config_json(args.config, args)
@@ -190,6 +208,10 @@ def main() -> None:
             tick += 1
             if tick % 10 == 0 or tick == 1:
                 LOG.info("tick %d: published %d messages", tick, len(devices))
+
+            if cfg.max_runtime_sec is not None and elapsed_sec >= cfg.max_runtime_sec:
+                LOG.info("max runtime reached (%.1f s)", cfg.max_runtime_sec)
+                break
 
             effective_interval = compute_effective_interval(
                 elapsed_sec,

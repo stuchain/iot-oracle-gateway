@@ -11,6 +11,25 @@ This project is an end-to-end **IoT telemetry pipeline** for coursework and demo
 - **Ganache** (CLI or GUI) for local Ethereum on port **8545**
 - **Mosquitto** (or another MQTT broker) on port **1883** by default
 
+## One-click Windows launcher
+
+From the repository root, double-click **`run.bat`** (or run it from **cmd**). That executes **`scripts/start_stack.ps1`**, which:
+
+0. **Checks dependencies:** verifies **Python**, **Node.js** / **npm**; if **Mosquitto** is missing, tries **`winget install -e --id EclipseFoundation.Mosquitto`** (UAC may prompt), then **Chocolatey**: if **`choco`** is not installed and the script is **running as Administrator**, it runs the [official Chocolatey install script](https://community.chocolatey.org/install), then **`choco install mosquitto -y`**. If you are not elevated, install Chocolatey manually or use **winget** / the Mosquitto installer. **pip** / **npm** steps as before.
+1. Opens **Ganache** on port **8545** (new console window)
+2. In **`contracts/`**, runs **`npx hardhat compile`** and **`npx hardhat run scripts/deploy.js --network localhost`**
+3. Reads the deployed address from **`contracts/deployments/localhost.json`** and starts the **oracle** with **`CONTRACT_ADDRESS`** set for that process only
+4. Starts **Mosquitto** with **`mosquitto/mosquitto.conf`**
+5. Starts the **Streamlit** dashboard and opens **http://127.0.0.1:8501** in your browser
+
+**Python:** use **Python on PATH**, or create a virtual environment at the repo root named **`venv`** (the script prefers **`venv\Scripts\python.exe`**). You can still run **`pip install -r requirements.txt`** yourself before **`run.bat`**; otherwise the script installs missing packages automatically.
+
+**From the dashboard:** save simulator parameters in the sidebar, then use **Start simulator** / **Stop simulator**. Optional **Max runtime** sets **`--max-runtime-sec`** for a timed run. Simulator logs appear in a **separate console window**.
+
+**Stopping the stack:** close each console window that was opened (Ganache, Mosquitto, oracle, Streamlit). **Do not** start **`run.bat`** again while those processes are still using ports **8545**, **1883**, **8000**, or **8501**, or you will get port conflicts.
+
+On **Linux / macOS** or for a **manual** setup, follow **[How to run (ordered)](#how-to-run-ordered)** below.
+
 ## Testing
 
 From the **repository root**, with dev dependencies installed (`pip install -r requirements.txt`):
@@ -185,19 +204,19 @@ This is documented steps only; no automated tests are added for this sanity chec
 
 ### Using the dashboard
 
-The dashboard **does not** start or stop the simulator (or Mosquitto); it only reads oracle metrics and can write simulator settings to disk.
+The dashboard reads oracle **`/metrics`**, can write **`config/sim_config.json`**, and can **start** or **stop** the simulator process (logs open in a separate console on Windows). It does not start Mosquitto, Ganache, or the oracle; use **[One-click Windows launcher](#one-click-windows-launcher)** or the manual steps below for those.
 
 1. Start **Mosquitto** (see [Running Mosquitto](#running-mosquitto)).
 2. Start the **oracle** in one terminal: `python -m oracle.service` (or your usual command; default HTTP **8000**).
 3. Start the **dashboard** in another terminal: `streamlit run dashboard/app.py`.
-4. In the sidebar, set **N_DEVICES**, **INTERVAL_SEC**, and optional burst fields, then click **Save config**. This creates or updates **`config/sim_config.json`** at the repo root (override with env **`SIM_CONFIG_PATH`** if needed).
-5. Start the **simulator** in a **third** terminal from the repo root (after saving):
+4. In the sidebar, set **N_DEVICES**, **INTERVAL_SEC**, optional burst fields, and optional **Max runtime**, then click **Save config** (required so **`config/sim_config.json`** exists before **Start simulator**). Override the config path with env **`SIM_CONFIG_PATH`** if needed.
+5. Click **Start simulator** in the sidebar (or run the simulator yourself in another terminal):
 
    ```bash
    python -m simulator.iot_simulator --config config/sim_config.json
    ```
 
-   The simulator reads that JSON; you can still use env vars or CLI flags for other options (e.g. `MQTT_HOST`, `HMAC_SECRET`). Without `--config`, the simulator uses environment defaults only.
+   Add **`--max-runtime-sec N`** for a timed run, or set **Max runtime** in the sidebar when using **Start simulator**. The simulator still accepts env vars or CLI flags for other options (e.g. `MQTT_HOST`, `HMAC_SECRET`). Without **`--config`**, the simulator uses environment defaults only.
 
 6. **Charts** (throughput and z-score over time) read **`data/telemetry_windows.csv`** on every Streamlit rerun (including auto-refresh). Override with **`TELEMETRY_CSV_PATH`** or **`DATA_DIR`** if needed; **`Z_THRESHOLD`** in the environment should match the oracle for the threshold line.
 
@@ -242,7 +261,7 @@ Run the telemetry simulator (requires Mosquitto or another MQTT broker):
 python -m simulator.iot_simulator
 ```
 
-Config via env or CLI: `N_DEVICES`, `INTERVAL_SEC`, `MQTT_HOST`, `MQTT_PORT`, `HMAC_SECRET`. To use parameters saved from the dashboard, pass **`--config config/sim_config.json`** (see [Using the dashboard](#using-the-dashboard)). Subscribe to telemetry with (see also "Running Mosquitto" above):
+Config via env or CLI: `N_DEVICES`, `INTERVAL_SEC`, `MQTT_HOST`, `MQTT_PORT`, `HMAC_SECRET`, **`MAX_RUNTIME_SEC`** (or **`--max-runtime-sec`**) to exit after N seconds. To use parameters saved from the dashboard, pass **`--config config/sim_config.json`** (see [Using the dashboard](#using-the-dashboard)). Subscribe to telemetry with (see also "Running Mosquitto" above):
 
 ```bash
 mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v
