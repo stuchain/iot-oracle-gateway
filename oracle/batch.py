@@ -36,7 +36,12 @@ def build_batch(summaries: List[WindowSummary]) -> Optional[Tuple[bytes, int, in
     """Return (sha256 digest, min start_ms, max end_ms, count) or None if summaries is empty."""
     if not summaries:
         return None
-    list_of_dicts = [_summary_to_row(s) for s in summaries]
+    # Canonicalize row order so the same logical batch hashes identically
+    # regardless of input list ordering.
+    list_of_dicts = sorted(
+        (_summary_to_row(s) for s in summaries),
+        key=lambda d: tuple(d[k] for k in BATCH_ROW_KEYS),
+    )
     canonical_bytes = json.dumps(
         list_of_dicts, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")

@@ -32,9 +32,11 @@ def verify_payload(payload: str | dict[str, Any], secret: bytes) -> tuple[Option
 
     if isinstance(payload, str):
         try:
-            parsed: dict[str, Any] = json.loads(payload)
+            parsed = json.loads(payload)
         except json.JSONDecodeError as e:
             LOG.debug("Invalid JSON in telemetry payload: %s", e)
+            return None, False
+        if not isinstance(parsed, dict):
             return None, False
     elif isinstance(payload, dict):
         parsed = payload
@@ -56,7 +58,7 @@ def verify_payload(payload: str | dict[str, Any], secret: bytes) -> tuple[Option
     # Ensure the parsed payload has the fields the rest of the pipeline expects.
     if not isinstance(parsed.get("device_id"), str) or not parsed["device_id"]:
         return None, False
-    if not isinstance(parsed.get("ts_ms"), int):
+    if not isinstance(parsed.get("ts_ms"), int) or isinstance(parsed.get("ts_ms"), bool):
         return None, False
 
     for k in ("temp_c", "humidity_pct", "power_w"):

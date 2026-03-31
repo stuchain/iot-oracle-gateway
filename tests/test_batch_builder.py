@@ -63,3 +63,50 @@ def test_build_batch_one_vs_two_summaries_differ():
     two = build_batch([_sample_a(), _sample_b()])
     assert one is not None and two is not None
     assert one[0] != two[0]
+
+
+def test_build_batch_same_rows_different_input_order_same_hash():
+    ab = build_batch([_sample_a(), _sample_b()])
+    ba = build_batch([_sample_b(), _sample_a()])
+    assert ab is not None and ba is not None
+    assert ab[0] == ba[0]
+    assert ab[1] == 0
+    assert ab[2] == 10000
+    assert ab[3] == 2
+
+
+def test_build_batch_duplicate_rows_keeps_count_and_range():
+    a = _sample_a()
+    out = build_batch([a, a])
+    assert out is not None
+    _h, start_ms, end_ms, count = out
+    assert start_ms == 0
+    assert end_ms == 5000
+    assert count == 2
+
+
+def test_build_batch_negative_and_large_ranges():
+    s1 = WindowSummary(
+        window_start_ms=-5000,
+        window_end_ms=0,
+        msg_count=1,
+        msgs_per_sec=0.2,
+        avg_latency_ms=1.0,
+        z_score=0.0,
+        is_anomaly=False,
+    )
+    s2 = WindowSummary(
+        window_start_ms=10**12,
+        window_end_ms=10**12 + 5000,
+        msg_count=1,
+        msgs_per_sec=0.2,
+        avg_latency_ms=1.0,
+        z_score=0.0,
+        is_anomaly=False,
+    )
+    out = build_batch([s1, s2])
+    assert out is not None
+    _h, start_ms, end_ms, count = out
+    assert start_ms == -5000
+    assert end_ms == 10**12 + 5000
+    assert count == 2

@@ -54,9 +54,15 @@ def _apply_sim_config_json(path: str, ns: argparse.Namespace) -> None:
     with open(path, encoding="utf-8") as f:
         j = json.load(f)
     if "N_DEVICES" in j:
-        ns.devices = int(j["N_DEVICES"])
+        try:
+            ns.devices = int(j["N_DEVICES"])
+        except (ValueError, TypeError):
+            LOG.warning("Ignoring invalid N_DEVICES in %s: %r", path, j["N_DEVICES"])
     if "INTERVAL_SEC" in j:
-        ns.interval = float(j["INTERVAL_SEC"])
+        try:
+            ns.interval = float(j["INTERVAL_SEC"])
+        except (ValueError, TypeError):
+            LOG.warning("Ignoring invalid INTERVAL_SEC in %s: %r", path, j["INTERVAL_SEC"])
     if "BURST_ENABLED" in j:
         v = j["BURST_ENABLED"]
         if isinstance(v, bool):
@@ -64,11 +70,20 @@ def _apply_sim_config_json(path: str, ns: argparse.Namespace) -> None:
         else:
             ns.burst_enabled = str(v).lower() in ("1", "true", "yes")
     if "BURST_START_SEC" in j:
-        ns.burst_start = int(j["BURST_START_SEC"])
+        try:
+            ns.burst_start = int(j["BURST_START_SEC"])
+        except (ValueError, TypeError):
+            LOG.warning("Ignoring invalid BURST_START_SEC in %s: %r", path, j["BURST_START_SEC"])
     if "BURST_DURATION_SEC" in j:
-        ns.burst_duration = int(j["BURST_DURATION_SEC"])
+        try:
+            ns.burst_duration = int(j["BURST_DURATION_SEC"])
+        except (ValueError, TypeError):
+            LOG.warning("Ignoring invalid BURST_DURATION_SEC in %s: %r", path, j["BURST_DURATION_SEC"])
     if "BURST_MULTIPLIER" in j:
-        ns.burst_multiplier = float(j["BURST_MULTIPLIER"])
+        try:
+            ns.burst_multiplier = float(j["BURST_MULTIPLIER"])
+        except (ValueError, TypeError):
+            LOG.warning("Ignoring invalid BURST_MULTIPLIER in %s: %r", path, j["BURST_MULTIPLIER"])
 
 
 def get_config():
@@ -114,6 +129,8 @@ def compute_effective_interval(
 ) -> float:
     """Return sleep interval for this tick: shorter during burst window, else interval_sec."""
     if not burst_enabled:
+        return interval_sec
+    if burst_multiplier <= 0:
         return interval_sec
     in_window = burst_start_sec <= elapsed_sec < burst_start_sec + burst_duration_sec
     return interval_sec / burst_multiplier if in_window else interval_sec

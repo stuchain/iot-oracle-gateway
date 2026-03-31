@@ -67,3 +67,59 @@ def test_skipped_windows_emit_empty_summaries():
     assert len(flushed) == 1
     assert flushed[0].window_start_ms == 2 * window_ms
     assert flushed[0].msg_count == 1
+
+
+def test_window_aggregator_rejects_non_positive_window_sec():
+    try:
+        WindowAggregator(window_sec=0)
+        assert False, "expected ValueError for window_sec=0"
+    except ValueError:
+        pass
+    try:
+        WindowAggregator(window_sec=-1)
+        assert False, "expected ValueError for window_sec<0"
+    except ValueError:
+        pass
+
+
+def test_out_of_order_message_finalizes_current_and_switches_back():
+    agg = WindowAggregator(window_sec=5)
+    # Current window starts at 5000.
+    agg.add_message({"ts_ms": 5900}, ingest_ts_ms=6000)
+    # Out-of-order message from earlier window [0,5000).
+    out = agg.add_message({"ts_ms": 900}, ingest_ts_ms=1000)
+    assert len(out) == 1
+    assert out[0].window_start_ms == 5000
+    assert out[0].msg_count == 1
+    flushed = agg.flush()
+    assert len(flushed) == 1
+    assert flushed[0].window_start_ms == 0
+    assert flushed[0].msg_count == 1
+
+
+def test_negative_ingest_timestamp_windows_are_supported():
+    agg = WindowAggregator(window_sec=5)
+    out1 = agg.add_message({"ts_ms": -6100}, ingest_ts_ms=-6000)
+    assert out1 == []
+    out2 = agg.add_message({"ts_ms": -1000}, ingest_ts_ms=1000)
+    assert len(out2) == 2
+    assert out2[0].window_start_ms == -10000
+    assert out2[1].window_start_ms == -5000
+    assert out2[1].msg_count == 0
+    flushed = agg.flush()
+    assert len(flushed) == 1
+    assert flushed[0].window_start_ms == 0
+
+
+def test_extreme_large_timestamps_compute_expected_windows():
+    agg = WindowAggregator(window_sec=5)
+    base = 10**15
+    out1 = agg.add_message({"ts_ms": base - 10}, ingest_ts_ms=base)
+    assert out1 == []
+    out2 = agg.add_message({"ts_ms": base + 6000 - 10}, ingest_ts_ms=base + 6000)
+    assert len(out2) == 1
+    assert out2[0].msg_count == 1
+    assert out2[0].window_end_ms - out2[0].window_start_ms == 5000
+    flushed = agg.flush()
+    assert len(flushed) == 1
+    assert flushed[0].msg_count == 1

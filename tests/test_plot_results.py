@@ -40,3 +40,76 @@ def test_plot_results_writes_non_empty_pngs(tmp_path):
     zp = out_dir / "z_score.png"
     assert tp.is_file() and tp.stat().st_size > 100
     assert zp.is_file() and zp.stat().st_size > 100
+
+
+def test_plot_results_fails_when_csv_missing(tmp_path):
+    out_dir = tmp_path / "plots"
+    script = REPO_ROOT / "scripts" / "plot_results.py"
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--csv",
+            str(tmp_path / "missing.csv"),
+            "--output-dir",
+            str(out_dir),
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 1
+    assert "CSV not found" in r.stderr
+
+
+def test_plot_results_fails_when_required_columns_missing(tmp_path):
+    csv_path = tmp_path / "telemetry_windows.csv"
+    csv_path.write_text("window_end_ms,msgs_per_sec\n1000,1.0\n", encoding="utf-8")
+    out_dir = tmp_path / "plots"
+    script = REPO_ROOT / "scripts" / "plot_results.py"
+    r = subprocess.run(
+        [sys.executable, str(script), "--csv", str(csv_path), "--output-dir", str(out_dir)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 1
+    assert "missing columns" in r.stderr
+
+
+def test_plot_results_accepts_window_start_ms_when_end_missing(tmp_path):
+    csv_path = tmp_path / "telemetry_windows.csv"
+    csv_path.write_text(
+        "window_start_ms,msgs_per_sec,z_score\n"
+        "0,1.0,0.1\n"
+        "5000,2.0,0.2\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "plots"
+    script = REPO_ROOT / "scripts" / "plot_results.py"
+    r = subprocess.run(
+        [sys.executable, str(script), "--csv", str(csv_path), "--output-dir", str(out_dir)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert (out_dir / "throughput.png").is_file()
+    assert (out_dir / "z_score.png").is_file()
+
+
+def test_plot_results_empty_csv_generates_placeholder_pngs(tmp_path):
+    csv_path = tmp_path / "telemetry_windows.csv"
+    csv_path.write_text("window_end_ms,msgs_per_sec,z_score\n", encoding="utf-8")
+    out_dir = tmp_path / "plots"
+    script = REPO_ROOT / "scripts" / "plot_results.py"
+    r = subprocess.run(
+        [sys.executable, str(script), "--csv", str(csv_path), "--output-dir", str(out_dir)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0
+    assert "CSV had no rows" in r.stdout
+    assert (out_dir / "throughput.png").is_file()
+    assert (out_dir / "z_score.png").is_file()

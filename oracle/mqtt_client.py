@@ -25,8 +25,20 @@ def make_on_message_handler(message_queue: "queue.Queue[tuple[str, int]]"):
 
     def on_message(_client: mqtt.Client, _userdata: Any, msg: Any) -> None:
         ingest_ts_ms = int(time.time() * 1000)
-        payload_str = msg.payload.decode("utf-8")
-        message_queue.put((payload_str, ingest_ts_ms))
+        raw_payload = getattr(msg, "payload", None)
+        if not isinstance(raw_payload, (bytes, bytearray)):
+            LOG.warning("Dropping MQTT payload with non-bytes type: %s", type(raw_payload).__name__)
+            return
+        try:
+            payload_str = raw_payload.decode("utf-8")
+        except UnicodeDecodeError as e:
+            LOG.warning("Dropping non-UTF8 MQTT payload: %s", e)
+            return
+        try:
+            message_queue.put_nowait((payload_str, ingest_ts_ms))
+        except queue.Full:
+            LOG.warning("Dropping MQTT payload because message queue is full")
+            return
 
     return on_message
 

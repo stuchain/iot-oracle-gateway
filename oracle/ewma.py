@@ -46,6 +46,9 @@ class EWMAZScoreAnomalyDetector:
         """
 
         x = float(value)
+        if not math.isfinite(x):
+            # Ignore non-finite observations to avoid poisoning detector state.
+            return 0.0, False
 
         if not self.initialized:
             self.mean = x

@@ -7,6 +7,7 @@ from simulator.iot_simulator import (
     _apply_sim_config_json,
     _parse_max_runtime_opt,
     compute_effective_interval,
+    device_ids,
     run_tick,
 )
 
@@ -122,3 +123,47 @@ def test_parse_max_runtime_opt():
     assert _parse_max_runtime_opt("0") is None
     assert _parse_max_runtime_opt("-1") is None
     assert _parse_max_runtime_opt("10") == 10.0
+
+
+def test_apply_sim_config_json_invalid_values_keep_existing_namespace(tmp_path):
+    path = tmp_path / "sim_config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "N_DEVICES": "abc",
+                "INTERVAL_SEC": "bad",
+                "BURST_ENABLED": "not-bool",
+                "BURST_START_SEC": "bad",
+                "BURST_DURATION_SEC": "bad",
+                "BURST_MULTIPLIER": "bad",
+            }
+        ),
+        encoding="utf-8",
+    )
+    ns = argparse.Namespace(
+        devices=2,
+        interval=1.5,
+        burst_enabled=False,
+        burst_start=30,
+        burst_duration=10,
+        burst_multiplier=2.0,
+    )
+    _apply_sim_config_json(str(path), ns)
+    assert ns.devices == 2
+    assert ns.interval == 1.5
+    assert ns.burst_enabled is False
+    assert ns.burst_start == 30
+    assert ns.burst_duration == 10
+    assert ns.burst_multiplier == 2.0
+
+
+def test_effective_interval_non_positive_burst_multiplier_falls_back():
+    got_zero = compute_effective_interval(65, 1.0, True, 60, 20, 0.0)
+    got_neg = compute_effective_interval(65, 1.0, True, 60, 20, -2.0)
+    assert got_zero == 1.0
+    assert got_neg == 1.0
+
+
+def test_device_ids_zero_or_negative_is_empty():
+    assert device_ids(0) == []
+    assert device_ids(-3) == []

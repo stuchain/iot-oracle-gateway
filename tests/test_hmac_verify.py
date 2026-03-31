@@ -50,3 +50,55 @@ def test_verify_payload_rejects_tampered_field_keeps_hmac():
     assert valid is False
     assert parsed is None
 
+
+def test_verify_payload_rejects_bool_ts_ms_even_with_valid_hmac():
+    secret = b"test-secret"
+    base = {
+        "device_id": "dev-01",
+        "ts_ms": True,
+        "temp_c": 22.5,
+        "humidity_pct": 60.0,
+        "power_w": 50.0,
+    }
+    full = {**base, "hmac": compute_hmac(base, secret)}
+    parsed, valid = verify_payload(full, secret)
+    assert valid is False
+    assert parsed is None
+
+
+def test_verify_payload_rejects_non_dict_json_payload():
+    secret = b"test-secret"
+    parsed, valid = verify_payload('["not","an","object"]', secret)
+    assert valid is False
+    assert parsed is None
+
+
+def test_verify_payload_rejects_non_string_hmac():
+    secret = b"test-secret"
+    payload = {
+        "device_id": "dev-01",
+        "ts_ms": 1000,
+        "temp_c": 22.5,
+        "humidity_pct": 60.0,
+        "power_w": 50.0,
+        "hmac": 12345,
+    }
+    parsed, valid = verify_payload(payload, secret)
+    assert valid is False
+    assert parsed is None
+
+
+def test_verify_payload_rejects_empty_device_id_even_with_valid_hmac():
+    secret = b"test-secret"
+    base = {
+        "device_id": "",
+        "ts_ms": 1000,
+        "temp_c": 22.5,
+        "humidity_pct": 60.0,
+        "power_w": 50.0,
+    }
+    full = {**base, "hmac": compute_hmac(base, secret)}
+    parsed, valid = verify_payload(full, secret)
+    assert valid is False
+    assert parsed is None
+

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from oracle.ewma import EWMAZScoreAnomalyDetector
 
 
@@ -50,4 +52,30 @@ def test_ewma_epsilon_zero_std_zero_is_safe():
     z1, a1 = detector.update(0.0)
     assert z1 == 0.0
     assert a1 is False
+
+
+def test_ewma_constructor_rejects_invalid_parameters():
+    with pytest.raises(ValueError):
+        EWMAZScoreAnomalyDetector(alpha=0.0, z_threshold=3.0)
+    with pytest.raises(ValueError):
+        EWMAZScoreAnomalyDetector(alpha=1.1, z_threshold=3.0)
+    with pytest.raises(ValueError):
+        EWMAZScoreAnomalyDetector(alpha=0.2, z_threshold=-0.1)
+    with pytest.raises(ValueError):
+        EWMAZScoreAnomalyDetector(alpha=0.2, z_threshold=3.0, epsilon=-1e-6)
+
+
+def test_ewma_non_finite_value_is_ignored_and_state_stays_finite():
+    detector = EWMAZScoreAnomalyDetector(alpha=0.2, z_threshold=3.0, epsilon=1e-6)
+    detector.update(5.0)
+    z, is_anomaly = detector.update(float("nan"))
+    assert z == 0.0
+    assert is_anomaly is False
+    assert math.isfinite(detector.mean)
+    assert math.isfinite(detector.var)
+    z2, is_anomaly2 = detector.update(float("inf"))
+    assert z2 == 0.0
+    assert is_anomaly2 is False
+    assert math.isfinite(detector.mean)
+    assert math.isfinite(detector.var)
 

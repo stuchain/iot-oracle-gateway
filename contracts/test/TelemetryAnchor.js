@@ -53,4 +53,40 @@ describe("TelemetryAnchor", function () {
     expect(rec.count).to.equal(count);
     expect(rec.submitter).to.equal(signer.address);
   });
+
+  it("appends records across multiple anchor calls in order", async function () {
+    const [signer] = await hre.ethers.getSigners();
+    const TelemetryAnchor = await hre.ethers.getContractFactory("TelemetryAnchor");
+    const anchor = await TelemetryAnchor.deploy();
+    await anchor.waitForDeployment();
+
+    const bh1 = hre.ethers.id("batch-1");
+    const bh2 = hre.ethers.id("batch-2");
+
+    await (await anchor.connect(signer).anchor(bh1, 1n, 2n, 3n)).wait();
+    await (await anchor.connect(signer).anchor(bh2, 4n, 5n, 6n)).wait();
+
+    expect(await anchor.anchorCount()).to.equal(2n);
+    const rec0 = await anchor.anchors(0);
+    const rec1 = await anchor.anchors(1);
+    expect(rec0.batchHash).to.equal(bh1);
+    expect(rec1.batchHash).to.equal(bh2);
+    expect(rec0.startMs).to.equal(1n);
+    expect(rec1.startMs).to.equal(4n);
+  });
+
+  it("records submitter address for different signers", async function () {
+    const [signer1, signer2] = await hre.ethers.getSigners();
+    const TelemetryAnchor = await hre.ethers.getContractFactory("TelemetryAnchor");
+    const anchor = await TelemetryAnchor.deploy();
+    await anchor.waitForDeployment();
+
+    await (await anchor.connect(signer1).anchor(hre.ethers.id("sig-1"), 10n, 20n, 1n)).wait();
+    await (await anchor.connect(signer2).anchor(hre.ethers.id("sig-2"), 21n, 30n, 2n)).wait();
+
+    const rec0 = await anchor.anchors(0);
+    const rec1 = await anchor.anchors(1);
+    expect(rec0.submitter).to.equal(signer1.address);
+    expect(rec1.submitter).to.equal(signer2.address);
+  });
 });

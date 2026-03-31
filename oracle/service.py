@@ -177,7 +177,12 @@ class OracleState:
             summaries = self.aggregator.add_message(parsed, ingest_ts_ms)
             for s in summaries:
                 z_score, is_anomaly = self._ewma_detector.update(s.msgs_per_sec)
-                self._append_window_row(s, z_score=z_score, is_anomaly=is_anomaly)
+                try:
+                    self._append_window_row(s, z_score=z_score, is_anomaly=is_anomaly)
+                except OSError as e:
+                    LOG.warning("Failed to append window CSV row: %s", e)
+                except Exception:
+                    LOG.exception("Unexpected error while appending window CSV row")
                 enriched = replace(s, z_score=z_score, is_anomaly=is_anomaly)
                 self._pending_anchor.append(enriched)
                 self.latest_window = s
@@ -191,7 +196,12 @@ class OracleState:
         with self._lock:
             for s in self.aggregator.flush():
                 z_score, is_anomaly = self._ewma_detector.update(s.msgs_per_sec)
-                self._append_window_row(s, z_score=z_score, is_anomaly=is_anomaly)
+                try:
+                    self._append_window_row(s, z_score=z_score, is_anomaly=is_anomaly)
+                except OSError as e:
+                    LOG.warning("Failed to append window CSV row during flush: %s", e)
+                except Exception:
+                    LOG.exception("Unexpected error while appending window CSV row during flush")
                 enriched = replace(s, z_score=z_score, is_anomaly=is_anomaly)
                 self._pending_anchor.append(enriched)
                 self.latest_window = s
@@ -215,16 +225,21 @@ class OracleState:
                     "error": None,
                     "block_number": None,
                 }
-            self._append_anchoring_log(
-                batch_hash="",
-                tx_hash="",
-                success=False,
-                skipped=True,
-                error="",
-                start_ms="",
-                end_ms="",
-                count="",
-            )
+            try:
+                self._append_anchoring_log(
+                    batch_hash="",
+                    tx_hash="",
+                    success=False,
+                    skipped=True,
+                    error="",
+                    start_ms="",
+                    end_ms="",
+                    count="",
+                )
+            except OSError as e:
+                LOG.warning("Failed to append anchoring log row (skip): %s", e)
+            except Exception:
+                LOG.exception("Unexpected error while appending anchoring log row (skip)")
             return
         batch_hash, start_ms, end_ms, count = batch
         try:
@@ -243,16 +258,21 @@ class OracleState:
                 "error": result.error,
                 "block_number": result.block_number,
             }
-        self._append_anchoring_log(
-            batch_hash=batch_hash.hex(),
-            tx_hash=result.tx_hash or "",
-            success=result.success,
-            skipped=False,
-            error=result.error or "",
-            start_ms=str(start_ms),
-            end_ms=str(end_ms),
-            count=str(count),
-        )
+        try:
+            self._append_anchoring_log(
+                batch_hash=batch_hash.hex(),
+                tx_hash=result.tx_hash or "",
+                success=result.success,
+                skipped=False,
+                error=result.error or "",
+                start_ms=str(start_ms),
+                end_ms=str(end_ms),
+                count=str(count),
+            )
+        except OSError as e:
+            LOG.warning("Failed to append anchoring log row: %s", e)
+        except Exception:
+            LOG.exception("Unexpected error while appending anchoring log row")
 
     def metrics_payload(self) -> dict[str, Any]:
         with self._lock:
@@ -390,6 +410,9 @@ def create_app(
             if mqtt_client is not None:
                 try:
                     mqtt_client.loop_stop()
+                except Exception:
+                    LOG.exception("MQTT loop_stop")
+                try:
                     mqtt_client.disconnect()
                 except Exception:
                     LOG.exception("MQTT disconnect")
