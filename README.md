@@ -1,303 +1,62 @@
 # IoT Oracle Gateway
 
-## Overview
+Signed MQTT telemetry → **oracle** (HMAC, time windows, EWMA z-score) → **`data/telemetry_windows.csv`** and **`GET /metrics`** (`:8000`). Optional **TelemetryAnchor** on a local chain. **Streamlit** dashboard (`:8501`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-This project is an end-to-end **IoT telemetry pipeline** for coursework and demos: simulated devices publish signed JSON over **MQTT**; an **oracle** gateway subscribes, verifies **HMAC**, aggregates traffic into fixed **time windows**, and runs **EWMA + z-score** anomaly detection. Window metrics are written to **CSV** and exposed via **`GET /metrics`**. Optional **on-chain anchoring** batches window hashes to a **`TelemetryAnchor`** Solidity contract on a **local** chain (Ganache/Hardhat). A **Streamlit dashboard** can plot throughput and z-scores and save simulator parameters. The stack is intentionally **single-machine** and easy to run without containers. For a concise data-flow description, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+## Requirements
 
-## Prerequisites
+- Python 3.10+
+- Node.js / npm (Hardhat in `contracts/`)
+- Mosquitto (or other broker) on **1883**
+- JSON-RPC on **8545** (Ganache or `npx hardhat node`)
 
-- **Python** 3.10+
-- **Node.js** and **npm** (Hardhat, Ganache CLI)
-- **Ganache** (CLI or GUI) for local Ethereum on port **8545**
-- **Mosquitto** (or another MQTT broker) on port **1883** by default
+## Install
 
-## One-click Windows launcher
+```bash
+pip install -r requirements.txt
+```
 
-From the repository root, double-click **`run.bat`** (or run it from **cmd**). That executes **`scripts/start_stack.ps1`**, which:
+For contracts: `cd contracts && npm ci` (or `npm install`).
 
-0. **Checks dependencies:** verifies **Python**, **Node.js** / **npm**; if **Mosquitto** is missing, tries **`winget install -e --id EclipseFoundation.Mosquitto`** (UAC may prompt), then **Chocolatey**: if **`choco`** is not installed and the script is **running as Administrator**, it runs the [official Chocolatey install script](https://community.chocolatey.org/install), then **`choco install mosquitto -y`**. If you are not elevated, install Chocolatey manually or use **winget** / the Mosquitto installer. **pip** / **npm** steps as before.
-1. Opens **Ganache** on port **8545** (new console window)
-2. In **`contracts/`**, runs **`npx hardhat compile`** and **`npx hardhat run scripts/deploy.js --network localhost`**
-3. Reads the deployed address from **`contracts/deployments/localhost.json`** and starts the **oracle** with **`CONTRACT_ADDRESS`** set for that process only
-4. Starts **Mosquitto** with **`mosquitto/mosquitto.conf`**
-5. Starts the **Streamlit** dashboard and opens **http://127.0.0.1:8501** in your browser
+## Run (Windows)
 
-The launcher now performs explicit readiness checks (RPC, oracle, dashboard) instead of fixed sleeps, and it fails fast with actionable errors if a required service is not reachable in time.
+From repo root: **`run.bat`** → runs `scripts/start_stack.ps1` (deps, Hardhat compile/deploy, oracle with `CONTRACT_ADDRESS`, Mosquitto, dashboard; opens `http://127.0.0.1:8501`). Ports **8545**, **1883**, **8000**, **8501**.
 
-**Python:** use **Python on PATH**, or create a virtual environment at the repo root named **`venv`** (the script prefers **`venv\Scripts\python.exe`**). You can still run **`pip install -r requirements.txt`** yourself before **`run.bat`**; otherwise the script installs missing packages automatically.
+If ports are stuck: **`stop.bat`** or `powershell -File scripts/stop_stack.ps1` (optionally `-Force`). That kills whatever listens on those ports.
 
-**From the dashboard:** save simulator parameters in the sidebar, then use **Start simulator** / **Stop simulator**. Optional **Max runtime** sets **`--max-runtime-sec`** for a timed run. Simulator logs appear in a **separate console window**.
+## Run (manual)
 
-**Stopping the stack (clean next run):**
+From repo root. Use the **same `HMAC_SECRET`** for simulator and oracle.
 
-1. Close each console window that was opened (Hardhat node, Mosquitto, oracle, Streamlit), or use **Task Manager** to end those `python.exe` / `node.exe` / `mosquitto.exe` windows if a window is stuck.
-2. Closing windows is **safe** for project data: CSV files and configs are written incrementally; you are not required to “eject” the database. The next **`run.bat`** redeploys to the local chain and continues normally.
-3. If the next launch reports **ports already in use** or health checks fail, run **`stop.bat`** from the repo root (or `powershell -File scripts/stop_stack.ps1`). It finds processes **listening** on **8545**, **1883**, **8000**, and **8501** and offers to stop them. For a non-interactive cleanup: `powershell -File scripts/stop_stack.ps1 -Force`.  
-   **Warning:** that stops *whatever* is listening on those ports, not only this project—use after you have closed other apps using those ports, or when you intend a full dev reset.
+1. `mosquitto -c mosquitto/mosquitto.conf`
+2. Local chain on `http://127.0.0.1:8545` (e.g. `npx hardhat node` or Ganache)
+3. **Anchoring (optional):** `cd contracts && npx hardhat compile && npx hardhat run scripts/deploy.js --network localhost` → set **`CONTRACT_ADDRESS`** to the deployed address
+4. `python -m oracle.service`
+5. `python -m simulator.iot_simulator --config config/sim_config.json` (or set env vars; see `simulator/`)
+6. `streamlit run dashboard/app.py`
 
-The launcher may **reuse** an already-running broker on **1883** or JSON-RPC on **8545** if they respond correctly; it can **reuse** oracle/dashboard on **8000**/**8501** if they pass health checks. If something is **broken** on a port, use **`stop.bat`** before **`run.bat`** again.
+**HMAC:** The oracle refuses the default secret unless you set a real **`HMAC_SECRET`** or **`ALLOW_INSECURE_DEFAULT_SECRET=true`** (local dev only).
 
-On **Linux / macOS** or for a **manual** setup, follow **[How to run (ordered)](#how-to-run-ordered)** below.
+**Dashboard:** Sidebar **Telemetry session** picks the active or archived CSV; **Past sessions** opens `data/telemetry_archive/`. **`TELEMETRY_ROTATE_ON_START`** (default `false`) rotates the active CSV on each oracle start; **`run.bat`** sets it for the oracle. See table below.
 
-## Testing
-
-From the **repository root**, with dev dependencies installed (`pip install -r requirements.txt`):
+## Tests
 
 ```bash
 python -m pytest
 ```
 
-Test modules live under **`tests/`** (oracle, simulator, contracts helpers, dashboard smoke checks, and plot script checks). Use `python -m pytest tests/ -q` for a quieter summary.
+## Environment (minimal)
 
-## How to run (ordered)
+| Variable | Notes |
+|----------|--------|
+| `HMAC_SECRET` | Must match simulator; required in any real use |
+| `CONTRACT_ADDRESS` | Set after deploy for anchoring; empty disables txs |
+| `GANACHE_URL` | Default `http://127.0.0.1:8545` |
+| `ORACLE_URL` | Dashboard → oracle (default `http://127.0.0.1:8000`) |
+| `TELEMETRY_ROTATE_ON_START` | `true`: archive non-empty `telemetry_windows.csv` on oracle start |
+| `DATA_DIR` | Default `data` — CSVs under here |
 
-Run from the **repository root** unless noted. Use the **same `HMAC_SECRET`** for the simulator and oracle.
+Full defaults: [`oracle/config.py`](oracle/config.py).
 
-1. **Start Mosquitto** with the project config: `mosquitto -c mosquitto/mosquitto.conf` (see [Running Mosquitto](#running-mosquitto)).
-2. **Start Ganache** on `http://127.0.0.1:8545` (e.g. `npx ganache --port 8545`).
-3. **Deploy the contract** (optional if you only want MQTT → oracle → CSV without anchoring): from `contracts/`, `npm install`, `npx hardhat compile`, `npx hardhat run scripts/deploy.js --network localhost`. Copy the printed address into **`CONTRACT_ADDRESS`** (or `oracle/contract.json` if you use that workflow).
-4. **Start the oracle:** `python -m oracle.service` — HTTP **`/metrics`** defaults to **port 8000** (see [Deploying TelemetryAnchor](#deploying-telemetryanchor-local-ganache) for env).
-5. **Start the simulator:** e.g. `python -m simulator.iot_simulator`, or with dashboard-saved config `python -m simulator.iot_simulator --config config/sim_config.json` (see [Simulator](#simulator) and [Using the dashboard](#using-the-dashboard)).
-6. **Optional — dashboard:** `streamlit run dashboard/app.py` (reads **`/metrics`** and **`data/telemetry_windows.csv`**). Use the sidebar **Telemetry session** control to plot and export the active file or archived runs under **`data/telemetry_archive/`** (see **`TELEMETRY_ROTATE_ON_START`** below). **Open past sessions** opens that archive folder in your file manager.
+## CI
 
-**Reproducible experiments (Phase 7):** with services up, you can run **`scripts/run_experiment_baseline.sh`** or **`scripts/run_experiment_burst.sh`** (bash/Git Bash), or **`scripts/run_experiment_baseline.ps1`** / **`scripts/run_experiment_burst.ps1`** on Windows, then **`python scripts/plot_results.py`** to generate plots under **`plots/`**.
-
-## Run examples and interpreting results
-
-Once **Mosquitto** and the **oracle** are running (and optional **Ganache** + contract if you care about anchoring), you can drive the simulator and watch the same numbers in the **CSV**, **`/metrics`**, and optionally the **dashboard**.
-
-### Baseline (steady traffic)
-
-I run the simulator for about **2–3 minutes** with eight devices and a 1-second tick, burst off, so the pipeline should look “quiet”: roughly stable throughput and no anomaly flags.
-
-**Linux / macOS / Git Bash:**
-
-```bash
-N_DEVICES=8 INTERVAL_SEC=1 BURST_ENABLED=false python -m simulator.iot_simulator
-```
-
-**Windows (cmd):**
-
-```bat
-set N_DEVICES=8
-set INTERVAL_SEC=1
-set BURST_ENABLED=false
-python -m simulator.iot_simulator
-```
-
-You can also use **`scripts/run_experiment_baseline.sh`** or **`scripts/run_experiment_baseline.ps1`** (defaults to ~3 minutes) to avoid typing env vars each time.
-
-**Where to look:** **`data/telemetry_windows.csv`** accumulates one row per closed window; **`messages per second`** and **`z_score`** should stay fairly flat, and **`is_anomaly`** should stay **0** in normal conditions. **`curl http://127.0.0.1:8000/metrics`** (or the Streamlit dashboard) shows the latest window and counts in JSON.
-
-### Burst (spike + anomaly)
-
-For a burst window, I keep the same **N_DEVICES** and **INTERVAL_SEC** but enable burst parameters so the simulator publishes faster for a short interval (here: burst starting at **60 s**, lasting **20 s**):
-
-**Linux / macOS / Git Bash:**
-
-```bash
-N_DEVICES=8 INTERVAL_SEC=1 \
-  BURST_ENABLED=1 BURST_START_SEC=60 BURST_DURATION_SEC=20 BURST_MULTIPLIER=5 \
-  python -m simulator.iot_simulator
-```
-
-**Windows (cmd):**
-
-```bat
-set N_DEVICES=8
-set INTERVAL_SEC=1
-set BURST_ENABLED=1
-set BURST_START_SEC=60
-set BURST_DURATION_SEC=20
-set BURST_MULTIPLIER=5
-python -m simulator.iot_simulator
-```
-
-Or run **`scripts/run_experiment_burst.sh`** / **`scripts/run_experiment_burst.ps1`** for a timed run.
-
-**What I expect:** during the burst, **`msgs_per_sec`** jumps in **`telemetry_windows.csv`**, **`z_score`** rises, and **`is_anomaly`** should be **1** in at least one window once the EWMA catches up (exact timing depends on **`WINDOW_SEC`** and **`Z_THRESHOLD`**). The **dashboard** charts make this easy to see: throughput spikes and the z-score line crosses the horizontal threshold.
-
-### Reading outputs (quick)
-
-- **Dashboard:** throughput over time and z-score vs **`Z_THRESHOLD`** (set **`Z_THRESHOLD`** in the dashboard env to match the oracle).
-- **CSV (`telemetry_windows.csv`):** each row is one window — check **`window_start_ms` / `window_end_ms`**, **`msgs_per_sec`**, **`z_score`**, **`is_anomaly`**.
-- **`anchoring_log.csv`:** if anchoring is enabled, each row has **`tx_hash`**, **`batch_hash`**, and **`success`**; **failed** attempts still have a row with **`success=0`** and often an empty **`tx_hash`**.
-
-**For the report:** I generate figures with **`python scripts/plot_results.py`** (reads the telemetry CSV, writes **`plots/throughput.png`** and **`plots/z_score.png`**) and cite **one or two `tx_hash` values** from **`anchoring_log.csv`** when I need on-chain evidence.
-
-## Configuration reference
-
-Values load from the environment (and **`.env`** via `python-dotenv` in the oracle). Defaults below match [`oracle/config.py`](oracle/config.py) unless stated.
-
-### Privacy / safe output defaults
-
-- By default, the project runs with **safe error output** for user-facing surfaces:
-  - dashboard messages avoid full local paths and raw exception internals,
-  - `/metrics` anchor error values are sanitized (for example `anchor_send_failed`),
-  - detailed exception text is reserved for debug mode.
-- Set `DEBUG=true` to enable verbose diagnostics (including raw exception details).
-- `SAFE_ERRORS=true` is enabled by default and keeps API error payloads sanitized.
-- For HMAC safety, the oracle now refuses to start with the default secret unless you set:
-  - a real `HMAC_SECRET`, or
-  - `ALLOW_INSECURE_DEFAULT_SECRET=true` explicitly for local development.
-
-| Variable | Default / notes |
-|----------|-----------------|
-| **Oracle — MQTT** | |
-| `MQTT_HOST` | `localhost` |
-| `MQTT_PORT` | `1883` |
-| **Oracle — windows & anomaly** | |
-| `WINDOW_SEC` | `5` — window length in seconds |
-| `EWMA_ALPHA` | `0.2` — EWMA smoothing |
-| `Z_THRESHOLD` | `3.0` — z-score above ⇒ `is_anomaly` |
-| **Oracle — HMAC** | |
-| `HMAC_SECRET` | `change-me-in-production` — **must match** the simulator; oracle refuses this default unless explicitly overridden |
-| `ALLOW_INSECURE_DEFAULT_SECRET` | `false` — allow running with default HMAC secret for local-only dev |
-| **Privacy / diagnostics** | |
-| `DEBUG` | `false` — when `true`, include verbose error details in UI/API/log output |
-| `SAFE_ERRORS` | `true` — sanitize user-facing/API error text |
-| **Oracle — anchoring** | |
-| `GANACHE_URL` | `http://127.0.0.1:8545` — JSON-RPC for Web3 |
-| `CONTRACT_ADDRESS` | empty — if unset, anchoring txs are disabled |
-| `CONTRACT_ABI_PATH` | path to compiled `TelemetryAnchor.json` under `contracts/artifacts/...` |
-| `ANCHOR_INTERVAL_SEC` | `60` — seconds between anchoring attempts |
-| **Oracle — data paths** | |
-| `DATA_DIR` | `data` — repo-root relative; window CSV is `telemetry_windows.csv` inside it (`WINDOWS_CSV_PATH` in code) |
-| `TELEMETRY_ROTATE_ON_START` | `false` — when `true`, each oracle **process start** moves a non-empty `telemetry_windows.csv` into `${DATA_DIR}/${TELEMETRY_ARCHIVE_SUBDIR}/` with a UTC timestamp in the filename, then starts a fresh CSV (the **`run.bat`** / `start_stack.ps1` launcher sets this for the oracle) |
-| `TELEMETRY_ARCHIVE_SUBDIR` | `telemetry_archive` — subdirectory of `DATA_DIR` for rotated telemetry CSVs |
-| `ANCHORING_LOG_PATH` | `${DATA_DIR}/anchoring_log.csv` |
-| **Simulator** | |
-| `N_DEVICES`, `INTERVAL_SEC` | device count and publish interval |
-| `BURST_ENABLED`, `BURST_START_SEC`, `BURST_DURATION_SEC`, `BURST_MULTIPLIER` | optional burst window (see [Simulator](#simulator)) |
-| **Dashboard** | |
-| `ORACLE_URL` | `http://127.0.0.1:8000` — oracle base URL |
-| `Z_THRESHOLD` | `3.0` — for chart threshold line (should match oracle) |
-| `TELEMETRY_CSV_PATH` | overrides CSV path for charts; else `DATA_DIR` + `telemetry_windows.csv` |
-| `SIM_CONFIG_PATH` | `config/sim_config.json` — where the UI saves simulator JSON |
-
-The oracle HTTP **bind** in code is **`0.0.0.0:8000`** (not overridden by env in `main()`).
-
-## Limitations
-
-- **Single process** oracle (threaded MQTT consumer + optional anchor loop); no horizontal scaling.
-- **MQTT** is assumed **trusted on the LAN** — there is no TLS/auth broker configuration in the defaults.
-- **HMAC** proves **integrity** of telemetry fields the oracle checks; it does **not** encrypt payloads or hide them on the wire.
-- **Chain** setup is **local development** (Ganache/Hardhat); not a production network deployment.
-- **Anchoring** requires a funded account on the local chain; failures are logged to **`anchoring_log.csv`** without halting ingest.
-
-## Running Mosquitto
-
-Start the MQTT broker using the project config (default port **1883**; simulator and oracle use `localhost:1883` unless overridden):
-
-```bash
-mosquitto -c mosquitto/mosquitto.conf
-```
-
-To subscribe and verify telemetry (e.g. after starting the simulator):
-
-```bash
-mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v
-```
-
-## Manual MQTT sanity test
-
-To confirm the simulator publishes as expected and the broker delivers messages:
-
-1. **Start Mosquitto:** `mosquitto -c mosquitto/mosquitto.conf`
-2. **Start the simulator** (e.g. with 2 devices, 1s interval):  
-   `N_DEVICES=2 INTERVAL_SEC=1 python -m simulator.iot_simulator`  
-   (On Windows: `set N_DEVICES=2 && set INTERVAL_SEC=1 && python -m simulator.iot_simulator`)
-3. **In another terminal**, run:  
-   `mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v`
-4. **Expect** JSON messages with fields: `device_id`, `ts_ms`, `temp_c`, `humidity_pct`, `power_w`, `hmac`.
-
-**Topic pattern (copy-paste):** `iot/devices/+/telemetry`  
-**Example topics:** `iot/devices/dev-01/telemetry`, `iot/devices/dev-02/telemetry`, etc.
-
-**Sample telemetry JSON (one line):**
-
-```json
-{"device_id":"dev-01","ts_ms":1710000000000,"temp_c":24.5,"humidity_pct":55.0,"power_w":42.0,"hmac":"a1b2c3..."}
-```
-
-This is documented steps only; no automated tests are added for this sanity check.
-
-## Components
-
-- **simulator/** – IoT producer script(s)
-- **oracle/** – Gateway service (MQTT ingest, windowing, anomaly detection, anchoring)
-- **contracts/** – Hardhat project and `TelemetryAnchor` Solidity contract; deploy with Ganache on port 8545 (see “Deploying TelemetryAnchor” below)
-- **dashboard/** – Streamlit UI for oracle metrics and simulator parameters. With the oracle listening on port **8000** (default), run: `streamlit run dashboard/app.py`. Set **`ORACLE_URL`** if the API is elsewhere.
-
-### Using the dashboard
-
-The dashboard reads oracle **`/metrics`**, can write **`config/sim_config.json`**, and can **start** or **stop** the simulator process (logs open in a separate console on Windows). It does not start Mosquitto, Ganache, or the oracle; use **[One-click Windows launcher](#one-click-windows-launcher)** or the manual steps below for those.
-
-1. Start **Mosquitto** (see [Running Mosquitto](#running-mosquitto)).
-2. Start the **oracle** in one terminal: `python -m oracle.service` (or your usual command; default HTTP **8000**).
-3. Start the **dashboard** in another terminal: `streamlit run dashboard/app.py`.
-4. In the sidebar, set **N_DEVICES**, **INTERVAL_SEC**, optional burst fields, and optional **Max runtime**, then click **Save config** (required so **`config/sim_config.json`** exists before **Start simulator**). Override the config path with env **`SIM_CONFIG_PATH`** if needed.
-5. Click **Start simulator** in the sidebar (or run the simulator yourself in another terminal):
-
-   ```bash
-   python -m simulator.iot_simulator --config config/sim_config.json
-   ```
-
-   Add **`--max-runtime-sec N`** for a timed run, or set **Max runtime** in the sidebar when using **Start simulator**. The simulator still accepts env vars or CLI flags for other options (e.g. `MQTT_HOST`, `HMAC_SECRET`). Without **`--config`**, the simulator uses environment defaults only.
-
-6. **Charts** (throughput and z-score over time) read **`data/telemetry_windows.csv`** on every Streamlit rerun (including auto-refresh). Override with **`TELEMETRY_CSV_PATH`** or **`DATA_DIR`** if needed; **`Z_THRESHOLD`** in the environment should match the oracle for the threshold line.
-
-### Deploying TelemetryAnchor (local Ganache)
-
-The oracle (later phases) sends batch hashes to the `TelemetryAnchor` contract on a local chain. **Ganache must be listening on port 8545** before you deploy; if it is not running, Hardhat will fail to connect (e.g. connection refused).
-
-1. **Start Ganache** on **http://127.0.0.1:8545** (default port **8545**):
-   - **CLI:** `npx ganache --port 8545` (or `ganache-cli -p 8545` if you use the legacy package name)
-   - **GUI:** Ganache, create a workspace with **8545** as the server port
-2. **In another terminal**, from the project root:
-
-   ```bash
-   cd contracts
-   npm install
-   npx hardhat compile
-   npx hardhat run scripts/deploy.js --network localhost
-   ```
-
-3. The script prints the deployed address and writes **`contracts/deployments/localhost.json`** (ignored by git) with `contractAddress`, `rpcUrl`, and `chainId`.  
-4. **For the oracle**, point the deployed address (and later the ABI) at your config or env. For example, set **`CONTRACT_ADDRESS`** to the printed address, or keep a local **`oracle/contract.json`** (see Phase 5 anchoring docs) when that file is wired.
-
-**Hardhat network:** `localhost` in [`contracts/hardhat.config.js`](contracts/hardhat.config.js) uses `http://127.0.0.1:8545`, matching Ganache’s default host/port.
-
-**CI (automated deploy check):** On push and pull requests, [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `npm ci`, `hardhat compile`, `hardhat test`, then starts **`npx hardhat node`** in the background (same host/port as above), runs `scripts/deploy.js --network localhost`, and asserts `contracts/deployments/localhost.json` contains a valid `contractAddress`. That replaces the manual “chain running + deploy succeeds” check for regressions; use Ganache or Hardhat node locally when developing.
-
-### Anchoring evidence for the report
-
-After runs with on-chain anchoring enabled, the oracle appends one row per anchoring attempt to **`data/anchoring_log.csv`** (override with **`ANCHORING_LOG_PATH`** or **`DATA_DIR`**). Columns include **`timestamp_iso`**, **`batch_hash`**, **`tx_hash`**, **`success`** (`1`/`0`), **`skipped`**, **`start_ms`**, **`end_ms`**, **`count`** (window range covered by the batch), and **`error`**. Failed sends are still logged with **`success=0`** and an empty **`tx_hash`** when no hash was returned.
-
-**For the report,** copy one or two **`tx_hash`** values from `anchoring_log.csv` and optionally show a short receipt or event snippet. To inspect on a local node (Ganache / Hardhat):
-
-- **Ganache GUI:** open the **Transactions** tab and find the tx by hash.
-- **JSON-RPC:** `eth_getTransactionReceipt` with your RPC URL (e.g. `curl` to `http://127.0.0.1:8545`) and decode **`logs`** for the **`Anchored`** event (see `TelemetryAnchor.sol`: `Anchored(batchHash, startMs, endMs, count, submitter)`).
-- **Hardhat console** (from **`contracts/`**): `npx hardhat console --network localhost`, then use `ethers` to `getTransactionReceipt(txHash)` and parse logs with the contract ABI, or call view helpers on the contract if you add them.
-
-### Simulator
-
-Run the telemetry simulator (requires Mosquitto or another MQTT broker):
-
-```bash
-python -m simulator.iot_simulator
-```
-
-Config via env or CLI: `N_DEVICES`, `INTERVAL_SEC`, `MQTT_HOST`, `MQTT_PORT`, `HMAC_SECRET`, **`MAX_RUNTIME_SEC`** (or **`--max-runtime-sec`**) to exit after N seconds. To use parameters saved from the dashboard, pass **`--config config/sim_config.json`** (see [Using the dashboard](#using-the-dashboard)). Subscribe to telemetry with (see also "Running Mosquitto" above):
-
-```bash
-mosquitto_sub -h localhost -p 1883 -t 'iot/devices/+/telemetry' -v
-```
-
-**Burst scenario:** To trigger a higher message rate during a time window (e.g. for anomaly evaluation), run for ~2 minutes with burst at 60s for 20s:
-
-```bash
-BURST_ENABLED=1 BURST_START_SEC=60 BURST_DURATION_SEC=20 BURST_MULTIPLIER=5 python -m simulator.iot_simulator
-```
-
-Message rate increases during the burst (60–80s); you can observe it via `mosquitto_sub` or oracle metrics.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) — Python tests + Hardhat compile/test/deploy check.
