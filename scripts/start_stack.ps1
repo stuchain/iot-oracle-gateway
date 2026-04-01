@@ -176,26 +176,143 @@ function Ensure-NodeRequirements {
     Write-Host 'Node dependencies installed.'
 }
 
+function Get-HardhatCliPath {
+    $cli = Join-Path $RepoRoot 'contracts\node_modules\hardhat\internal\cli\bootstrap.js'
+    if (-not (Test-Path -LiteralPath $cli)) {
+        throw "Hardhat CLI entrypoint not found: $cli"
+    }
+    return $cli
+}
+
+function Test-PortInUse {
+    param([int]$Port)
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop
+        return $null -ne $conn
+    }
+    catch {
+        $netstat = netstat -ano | Select-String -Pattern "LISTENING\s+\d+$"
+        foreach ($line in $netstat) {
+            if ($line.Line -match ":(\d+)\s+") {
+                if ([int]$Matches[1] -eq $Port) {
+                    return $true
+                }
+            }
+        }
+        return $false
+    }
+}
+
+function Invoke-JsonRpc {
+    param(
+        [string]$Url,
+        [string]$Method = 'web3_clientVersion'
+    )
+    $body = @{
+        jsonrpc = '2.0'
+        method = $Method
+        params = @()
+        id = 1
+    } | ConvertTo-Json -Compress
+    return Invoke-RestMethod -Method Post -Uri $Url -ContentType 'application/json' -Body $body -TimeoutSec 2
+}
+
+function Wait-JsonRpcReady {
+    param(
+        [string]$Url,
+        [int]$TimeoutSec = 30
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $resp = Invoke-JsonRpc -Url $Url
+            if ($resp.result) {
+                return $true
+            }
+        }
+        catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    return $false
+}
+
+function Wait-HttpReady {
+    param(
+        [string]$Url,
+        [int]$TimeoutSec = 30
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $resp = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 2
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
+                return $true
+            }
+        }
+        catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    return $false
+}
+
+function Assert-StartupPortsAvailable {
+    if (Test-PortInUse -Port 1883) {
+        Write-Host 'Port 1883 already in use. Reusing existing MQTT broker.'
+    }
+
+    if (Test-PortInUse -Port 8000) {
+        Write-Host 'Port 8000 already in use. Checking existing oracle health...'
+        if (-not (Wait-HttpReady -Url 'http://127.0.0.1:8000/metrics' -TimeoutSec 5)) {
+            throw 'Port 8000 is in use but oracle health check failed. Stop the process on 8000, then run run.bat again.'
+        }
+        Write-Host 'Oracle already healthy on :8000. Reusing existing oracle service.'
+    }
+
+    if (Test-PortInUse -Port 8501) {
+        Write-Host 'Port 8501 already in use. Checking existing dashboard health...'
+        if (-not (Wait-HttpReady -Url 'http://127.0.0.1:8501' -TimeoutSec 8)) {
+            throw 'Port 8501 is in use but dashboard health check failed. Stop the process on 8501, then run run.bat again.'
+        }
+        Write-Host 'Dashboard already healthy on :8501. Reusing existing dashboard service.'
+    }
+}
+
 $py = Resolve-Python
 Ensure-PythonRequirements -PythonExe $py
 $mosquittoExe = Ensure-Mosquitto
 Write-Host "Using Mosquitto: $mosquittoExe"
 Assert-NodeToolchain
 Ensure-NodeRequirements
-
-Write-Host 'Starting Ganache on port 8545 (new window)...'
-Start-Process cmd.exe -ArgumentList @('/k', 'npx ganache --port 8545') -WorkingDirectory $RepoRoot | Out-Null
-Write-Host 'Waiting for RPC...'
-Start-Sleep -Seconds 5
-
+$hardhatCli = Get-HardhatCliPath
 $contractsDir = Join-Path $RepoRoot 'contracts'
+$rpcUrl = 'http://127.0.0.1:8545'
+
+Assert-StartupPortsAvailable
+
+if (Test-PortInUse -Port 8545) {
+    Write-Host 'Port 8545 already in use. Reusing existing JSON-RPC endpoint.'
+}
+else {
+    Write-Host 'Starting local Hardhat node on port 8545 (new window)...'
+    $hardhatNodeInner = "node `"$hardhatCli`" node --hostname 127.0.0.1 --port 8545"
+    $hardhatNodeCmd = "`"$hardhatNodeInner`""
+    Start-Process cmd.exe -ArgumentList @('/k', $hardhatNodeCmd) -WorkingDirectory $contractsDir | Out-Null
+}
+
+Write-Host 'Waiting for RPC readiness...'
+if (-not (Wait-JsonRpcReady -Url $rpcUrl -TimeoutSec 40)) {
+    throw 'JSON-RPC endpoint was not ready at http://127.0.0.1:8545 within 40s. Ensure Hardhat/Ganache can bind to port 8545, then run run.bat again.'
+}
+
 Push-Location $contractsDir
 try {
     Write-Host 'Compiling contracts...'
-    npx hardhat compile
+    & node $hardhatCli compile
     if ($LASTEXITCODE -ne 0) { throw 'hardhat compile failed. Not starting oracle.' }
     Write-Host 'Deploying to localhost...'
-    npx hardhat run scripts/deploy.js --network localhost
+    & node $hardhatCli run scripts/deploy.js --network localhost
     if ($LASTEXITCODE -ne 0) { throw 'Deploy failed. Not starting oracle or downstream services.' }
 }
 finally {
@@ -215,24 +332,51 @@ if ([string]::IsNullOrWhiteSpace($contractAddress)) {
 Write-Host "Deployed contract: $contractAddress"
 
 $mosqConf = Join-Path $RepoRoot 'mosquitto\mosquitto.conf'
-Write-Host 'Starting Mosquitto (new window)...'
-$mosqCmd = "`"$mosquittoExe`" -c `"$mosqConf`""
-Start-Process cmd.exe -ArgumentList @('/k', $mosqCmd) -WorkingDirectory $RepoRoot | Out-Null
-Start-Sleep -Seconds 2
+if (Test-PortInUse -Port 1883) {
+    Write-Host 'Skipping Mosquitto start because :1883 is already in use.'
+}
+else {
+    Write-Host 'Starting Mosquitto (new window)...'
+    $mosqInner = "`"$mosquittoExe`" -c `"$mosqConf`""
+    $mosqCmd = "`"$mosqInner`""
+    Start-Process cmd.exe -ArgumentList @('/k', $mosqCmd) -WorkingDirectory $RepoRoot | Out-Null
+    Start-Sleep -Seconds 2
+}
 
-Write-Host 'Starting oracle (new window)...'
-$oracleCmd = "set CONTRACT_ADDRESS=$contractAddress&& cd /d `"$RepoRoot`" && `"$py`" -m oracle.service"
-Start-Process cmd.exe -ArgumentList @('/k', $oracleCmd) | Out-Null
+if (Test-PortInUse -Port 8000) {
+    Write-Host 'Skipping oracle start because healthy service is already running on :8000.'
+}
+else {
+    Write-Host 'Starting oracle (new window)...'
+    $oracleInner = "set HMAC_SECRET=local-dev-secret&& set CONTRACT_ADDRESS=$contractAddress&& cd /d `"$RepoRoot`" && `"$py`" -m oracle.service"
+    $oracleCmd = "`"$oracleInner`""
+    Start-Process cmd.exe -ArgumentList @('/k', $oracleCmd) | Out-Null
+}
 
-Write-Host 'Starting Streamlit dashboard (new window)...'
-$dashCmd = "cd /d `"$RepoRoot`" && `"$py`" -m streamlit run dashboard\app.py"
-Start-Process cmd.exe -ArgumentList @('/k', $dashCmd) | Out-Null
+if (Test-PortInUse -Port 8501) {
+    Write-Host 'Skipping dashboard start because healthy service is already running on :8501.'
+}
+else {
+    Write-Host 'Starting Streamlit dashboard (new window)...'
+    $dashInner = "set HMAC_SECRET=local-dev-secret&& cd /d `"$RepoRoot`" && `"$py`" -m streamlit run dashboard\app.py"
+    $dashCmd = "`"$dashInner`""
+    Start-Process cmd.exe -ArgumentList @('/k', $dashCmd) | Out-Null
+}
 
-Start-Sleep -Seconds 3
+Write-Host 'Waiting for oracle health on http://127.0.0.1:8000/metrics ...'
+if (-not (Wait-HttpReady -Url 'http://127.0.0.1:8000/metrics' -TimeoutSec 30)) {
+    throw 'Oracle did not become reachable at http://127.0.0.1:8000/metrics within 30s.'
+}
+
+Write-Host 'Waiting for dashboard on http://127.0.0.1:8501 ...'
+if (-not (Wait-HttpReady -Url 'http://127.0.0.1:8501' -TimeoutSec 45)) {
+    throw 'Dashboard did not become reachable at http://127.0.0.1:8501 within 45s.'
+}
+
 Write-Host 'Opening browser at http://127.0.0.1:8501 ...'
 Start-Process 'http://127.0.0.1:8501'
 
 Write-Host ''
 Write-Host 'Stack launch commands issued. Close each console window to stop that service.'
-Write-Host 'Ports: Ganache 8545, Mosquitto 1883, Oracle 8000, Streamlit 8501.'
+Write-Host 'Ports: Hardhat node 8545, Mosquitto 1883, Oracle 8000, Streamlit 8501.'
 Write-Host 'Avoid running this twice without closing old windows (port conflicts).'
