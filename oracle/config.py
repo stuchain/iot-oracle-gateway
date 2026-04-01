@@ -67,6 +67,9 @@ ALLOW_INSECURE_DEFAULT_SECRET = _bool("ALLOW_INSECURE_DEFAULT_SECRET", False)
 # Data paths (default: repo-root "data/" and files under it)
 DATA_DIR = os.getenv("DATA_DIR", "data")
 WINDOWS_CSV_PATH = os.path.join(DATA_DIR, "telemetry_windows.csv")
+# When true, oracle startup moves a non-empty telemetry_windows.csv into DATA_DIR/TELEMETRY_ARCHIVE_SUBDIR/
+TELEMETRY_ROTATE_ON_START = _bool("TELEMETRY_ROTATE_ON_START", False)
+TELEMETRY_ARCHIVE_SUBDIR = os.getenv("TELEMETRY_ARCHIVE_SUBDIR", "telemetry_archive")
 ANCHOR_LOG_PATH = os.path.join(DATA_DIR, "anchor_log.txt")
 ANCHORING_LOG_PATH = os.path.join(DATA_DIR, "anchoring_log.csv")
 

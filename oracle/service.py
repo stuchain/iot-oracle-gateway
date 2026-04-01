@@ -6,6 +6,7 @@ import csv
 import logging
 import os
 import queue
+import shutil
 import threading
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -29,6 +30,8 @@ from oracle.config import (
     GANACHE_URL,
     HMAC_SECRET,
     SAFE_ERRORS,
+    TELEMETRY_ARCHIVE_SUBDIR,
+    TELEMETRY_ROTATE_ON_START,
     WINDOW_SEC,
     WINDOWS_CSV_PATH,
     Z_THRESHOLD,
@@ -329,6 +332,36 @@ def _anchor_loop(state: OracleState, interval_sec: float, stop_event: threading.
             LOG.exception("anchor tick failed")
 
 
+def rotate_telemetry_windows_csv_if_enabled(csv_path: str) -> None:
+    """If enabled, move existing non-empty telemetry CSV into the archive dir before a new session."""
+    if not TELEMETRY_ROTATE_ON_START:
+        return
+    abs_csv = os.path.abspath(csv_path)
+    if not os.path.isfile(abs_csv) or os.path.getsize(abs_csv) == 0:
+        return
+    parent = os.path.dirname(abs_csv)
+    archive_dir = os.path.join(parent, TELEMETRY_ARCHIVE_SUBDIR)
+    try:
+        os.makedirs(archive_dir, exist_ok=True)
+    except OSError as e:
+        LOG.warning("Could not create telemetry archive dir: %s", e)
+        return
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dest = os.path.join(archive_dir, f"telemetry_windows_{ts}.csv")
+    n = 0
+    while os.path.exists(dest):
+        n += 1
+        dest = os.path.join(archive_dir, f"telemetry_windows_{ts}_{n}.csv")
+    try:
+        shutil.move(abs_csv, dest)
+        LOG.info(
+            "Rotated telemetry CSV into archive: %s",
+            dest if DEBUG else redact_path(dest),
+        )
+    except OSError as e:
+        LOG.warning("Could not rotate telemetry CSV: %s", e)
+
+
 def create_app(
     *,
     start_mqtt: bool = True,
@@ -394,6 +427,8 @@ def create_app(
     mqtt_thread = None
     if start_mqtt:
         mqtt_client, q, _mqtt_loop_thread = start_mqtt_consumer(message_queue=q)
+
+    rotate_telemetry_windows_csv_if_enabled(csv_p)
 
     state = OracleState(
         window_sec=ws,

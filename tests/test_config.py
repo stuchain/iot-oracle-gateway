@@ -49,6 +49,16 @@ def test_config_contract_address_strip_and_data_paths(monkeypatch):
 
 def teardown_module():
     # Keep process env stable for subsequent tests in this session.
-    for key in ("MQTT_PORT", "WINDOW_SEC", "EWMA_ALPHA", "Z_THRESHOLD", "HMAC_SECRET", "CONTRACT_ADDRESS", "DATA_DIR"):
+    for key in (
+        "MQTT_PORT",
+        "WINDOW_SEC",
+        "EWMA_ALPHA",
+        "Z_THRESHOLD",
+        "HMAC_SECRET",
+        "CONTRACT_ADDRESS",
+        "DATA_DIR",
+        "TELEMETRY_ROTATE_ON_START",
+        "TELEMETRY_ARCHIVE_SUBDIR",
+    ):
         os.environ.pop(key, None)
     _reload_config()

@@ -40,6 +40,7 @@ def _build_streamlit_stub():
     mod.markdown = lambda *a, **k: None
     mod.line_chart = lambda *a, **k: None
     mod.success = lambda *a, **k: None
+    mod.toast = lambda *a, **k: None
     mod.warning = lambda *a, **k: None
     mod.info = lambda *a, **k: None
     mod.error = lambda *a, **k: None
@@ -47,9 +48,20 @@ def _build_streamlit_stub():
     mod.number_input = lambda *a, **k: k.get("value", 0)
     mod.checkbox = lambda *a, **k: k.get("value", False)
     mod.button = lambda *a, **k: False
+
+    def _selectbox(*args, **kwargs):
+        opts = kwargs.get("options")
+        if opts is None and len(args) > 1:
+            opts = args[1]
+        idx = kwargs.get("index", 0)
+        if isinstance(opts, list) and opts:
+            return opts[idx] if idx < len(opts) else opts[0]
+        return None
+
+    mod.selectbox = _selectbox
     mod.download_button = lambda *a, **k: None
     mod.rerun = lambda *a, **k: None
-    mod.columns = lambda n: [_Ctx() for _ in range(n)]
+    mod.columns = lambda n, *a, **k: [_Ctx() for _ in range(n)]
     return mod
 
 
@@ -207,3 +219,50 @@ def test_build_results_export_zip_contains_metrics_and_artifacts(monkeypatch, tm
     assert "export_manifest.json" in names
     inner = zf.read("metrics.json").decode("utf-8")
     assert "0xabc" in inner and "last_anchor_info" in inner
+
+
+def test_list_telemetry_session_files_includes_current_and_archives(monkeypatch, tmp_path):
+    app = _import_dashboard_app(monkeypatch)
+    data = tmp_path / "data"
+    data.mkdir()
+    current = data / "telemetry_windows.csv"
+    current.write_text("window_end_ms,msgs_per_sec,z_score\n", encoding="utf-8")
+    arch = data / "telemetry_archive"
+    arch.mkdir()
+    old = arch / "telemetry_windows_20250101T120000Z.csv"
+    old.write_text("window_end_ms,msgs_per_sec,z_score\n5000,1,0\n", encoding="utf-8")
+    monkeypatch.setenv("DATA_DIR", "data")
+    monkeypatch.delenv("TELEMETRY_CSV_PATH", raising=False)
+    app._REPO_ROOT = tmp_path
+    entries = app.list_telemetry_session_files()
+    assert len(entries) >= 2
+    assert entries[0][0] == "Current (active)"
+    assert entries[0][1] == current
+    names = [e[0] for e in entries]
+    assert "telemetry_windows_20250101T120000Z.csv" in names
+
+
+def test_open_past_sessions_folder_creates_archive_and_returns_none(monkeypatch, tmp_path):
+    app = _import_dashboard_app(monkeypatch)
+    monkeypatch.setenv("DATA_DIR", "data")
+    app._REPO_ROOT = tmp_path
+    opened = []
+
+    def _fake_popen(cmd, **_k):
+        opened.append(cmd)
+
+    monkeypatch.setattr("subprocess.Popen", _fake_popen)
+    err = app.open_past_sessions_folder()
+    assert err is None
+    assert (tmp_path / "data" / "telemetry_archive").is_dir()
+    assert opened
+
+
+def test_load_telemetry_csv_accepts_explicit_path(monkeypatch, tmp_path):
+    app = _import_dashboard_app(monkeypatch)
+    p = tmp_path / "other.csv"
+    p.write_text("window_end_ms,msgs_per_sec,z_score\n1000,1.0,0\n", encoding="utf-8")
+    df, err = app.load_telemetry_csv(p)
+    assert err is None
+    assert df is not None
+    assert len(df) == 1

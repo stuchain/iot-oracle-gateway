@@ -22,7 +22,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
-from oracle.config import DEBUG, redact_path, redact_url, sanitize_exception
+from oracle.config import DEBUG, TELEMETRY_ARCHIVE_SUBDIR, redact_path, redact_url, sanitize_exception
 
 LOG = logging.getLogger(__name__)
 
@@ -58,12 +58,22 @@ st.markdown(
         --space-4: 0.62rem;
       }
       .block-container {
-        padding-top: 0.5rem;
+        padding-top: 0.62rem;
         padding-bottom: 0.3rem;
       }
-      h1, h2, h3, h4 {
+      h2, h3, h4 {
         margin-top: 0.16rem !important;
         margin-bottom: 0.24rem !important;
+      }
+      /* Main title: room for descenders (y, g, p) — tight line-height + overflow clips glyphs */
+      h1 {
+        margin-top: 0.16rem !important;
+        margin-bottom: 0.28rem !important;
+        line-height: 1.42 !important;
+        padding-bottom: 0.12em !important;
+      }
+      [data-testid="stHeading"] {
+        overflow: visible !important;
       }
       p { margin-bottom: 0.16rem !important; }
       .section-card {
@@ -181,42 +191,125 @@ st.markdown(
       }
       div[data-testid="stMetricValue"] { font-size: 0.96rem !important; }
       div[data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
+      section[data-testid="stSidebar"] {
+        padding-top: 0.35rem !important;
+      }
+      section[data-testid="stSidebar"] > div {
+        padding-top: 0.15rem !important;
+        padding-bottom: 0.25rem !important;
+      }
+      section[data-testid="stSidebar"] h1,
+      section[data-testid="stSidebar"] h2,
+      section[data-testid="stSidebar"] h3 {
+        font-size: 0.95rem !important;
+        margin-top: 0 !important;
+        margin-bottom: 0.12rem !important;
+        line-height: 1.2 !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stCaption"] {
+        margin-top: 0 !important;
+        margin-bottom: 0.2rem !important;
+        font-size: 0.72rem !important;
+      }
       section[data-testid="stSidebar"] .stNumberInput,
       section[data-testid="stSidebar"] .stCheckbox,
-      section[data-testid="stSidebar"] .stTextInput {
-        margin-bottom: 0.08rem;
+      section[data-testid="stSidebar"] .stTextInput,
+      section[data-testid="stSidebar"] .stSelectbox {
+        margin-bottom: 0.02rem !important;
       }
       section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p {
-        font-size: 0.78rem;
+        font-size: 0.76rem;
       }
       section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
-        margin-bottom: 0.2rem;
+        margin-bottom: 0.06rem !important;
+        font-size: 0.78rem !important;
       }
       section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div,
-      section[data-testid="stSidebar"] [data-testid="stTextInput"] > div {
-        margin-bottom: 0.18rem;
+      section[data-testid="stSidebar"] [data-testid="stTextInput"] > div,
+      section[data-testid="stSidebar"] [data-testid="stSelectbox"] > div {
+        margin-bottom: 0.06rem !important;
       }
       .sidebar-section-gap {
-        margin-top: 0.34rem;
-        margin-bottom: 0.16rem;
+        margin-top: 0.18rem;
+        margin-bottom: 0.08rem;
       }
-      section[data-testid="stSidebar"] div[data-testid="stButton"] button {
-        width: 100%;
-        border-radius: var(--radius-sm);
-        min-height: 2.2rem;
-        font-size: 0.88rem;
+      section[data-testid="stSidebar"] [data-testid="stButton"] button {
+        width: 100% !important;
+        box-sizing: border-box !important;
+        min-height: 2.05rem !important;
+        border-radius: 8px !important;
+        font-size: 0.8rem !important;
+        font-weight: 550 !important;
+        letter-spacing: 0.02em !important;
+        padding: 0.35rem 0.5rem !important;
+        transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease !important;
+      }
+      /* Secondary / outline: unified “ghost” panel buttons */
+      section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"] {
+        background: rgba(30, 41, 59, 0.72) !important;
+        border: 1px solid rgba(148, 163, 184, 0.38) !important;
+        color: #e2e8f0 !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"]:hover:not(:disabled) {
+        background: rgba(51, 65, 85, 0.85) !important;
+        border-color: rgba(186, 230, 253, 0.35) !important;
+        color: #f8fafc !important;
+      }
+      /* Primary: Start simulator */
+      section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] {
+        background: linear-gradient(180deg, #15803d 0%, #166534 100%) !important;
+        border: 1px solid rgba(74, 222, 128, 0.45) !important;
+        color: #f0fdf4 !important;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover:not(:disabled) {
+        filter: brightness(1.06) !important;
+        border-color: rgba(134, 239, 172, 0.55) !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stButton"] button:disabled {
+        opacity: 0.4 !important;
+        cursor: not-allowed !important;
       }
       section[data-testid="stSidebar"] div[data-testid="stButton"] {
-        margin-bottom: 0.16rem;
+        margin-bottom: 0.1rem;
       }
       section[data-testid="stSidebar"] [data-testid="stDownloadButton"] button {
-        width: 100%;
-        border-radius: var(--radius-sm);
-        min-height: 2.2rem;
-        font-size: 0.88rem;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        min-height: 2.05rem !important;
+        border-radius: 8px !important;
+        font-size: 0.8rem !important;
+        font-weight: 550 !important;
+        letter-spacing: 0.02em !important;
+        padding: 0.35rem 0.5rem !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stDownloadButton"] button[kind="primary"] {
+        background: linear-gradient(180deg, #15803d 0%, #166534 100%) !important;
+        border: 1px solid rgba(74, 222, 128, 0.45) !important;
+        color: #f0fdf4 !important;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stDownloadButton"] button[kind="primary"]:hover:not(:disabled) {
+        filter: brightness(1.06) !important;
       }
       section[data-testid="stSidebar"] [data-testid="stDownloadButton"] {
-        margin-bottom: 0.16rem;
+        margin-bottom: 0.1rem;
+      }
+      section[data-testid="stSidebar"] .sidebar-run-line {
+        margin: 0.08rem 0 0.18rem 0 !important;
+        line-height: 1.35 !important;
+      }
+      /* Equal-width columns in sidebar so paired buttons align */
+      section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
+        gap: 0.4rem !important;
+        align-items: stretch !important;
+      }
+      section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        flex: 1 1 0% !important;
+        min-width: 0 !important;
+      }
+      .sidebar-btn-row-gap {
+        height: 0.4rem;
       }
     </style>
     """,
@@ -313,6 +406,50 @@ def telemetry_csv_path() -> Path:
     return _REPO_ROOT / data_dir / "telemetry_windows.csv"
 
 
+def telemetry_archive_dir() -> Path:
+    """Directory where rotated telemetry CSVs are stored (matches oracle)."""
+    data_dir = os.getenv("DATA_DIR", "data")
+    return _REPO_ROOT / data_dir / TELEMETRY_ARCHIVE_SUBDIR
+
+
+def list_telemetry_session_files() -> list[tuple[str, Path]]:
+    """Return (label, path): active ``telemetry_windows.csv`` first, then archived sessions newest first."""
+    current = telemetry_csv_path()
+    entries: list[tuple[str, Path]] = [("Current (active)", current)]
+    arch = telemetry_archive_dir()
+    if arch.is_dir():
+        archived = sorted(
+            arch.glob("telemetry_windows_*.csv"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for p in archived:
+            entries.append((p.name, p))
+    return entries
+
+
+def open_past_sessions_folder() -> Optional[str]:
+    """Create the telemetry archive directory if needed and open it in the OS file manager."""
+    arch = telemetry_archive_dir()
+    try:
+        arch.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        LOG.warning("Could not create telemetry archive dir: %s", e)
+        return str(e)
+    p = arch.resolve()
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(f'explorer "{p}"', shell=True)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(p)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(p)], check=False)
+        return None
+    except Exception as e:
+        LOG.warning("Could not open past sessions folder: %s", e)
+        return str(e)
+
+
 def anchoring_log_csv_path() -> Path:
     """Default matches oracle ``ANCHORING_LOG_PATH`` / ``DATA_DIR`` / ``anchoring_log.csv``."""
     override = os.getenv("ANCHORING_LOG_PATH")
@@ -405,9 +542,9 @@ def build_results_export_zip(
     return buf.getvalue(), filename
 
 
-def load_telemetry_csv() -> tuple[Optional[pd.DataFrame], Optional[str]]:
+def load_telemetry_csv(path: Optional[Path] = None) -> tuple[Optional[pd.DataFrame], Optional[str]]:
     """Load window CSV; return (df, error_message). Error set if unreadable or missing columns."""
-    path = telemetry_csv_path()
+    path = telemetry_csv_path() if path is None else path
     if not path.is_file():
         if DEBUG:
             return (
@@ -439,23 +576,43 @@ st_autorefresh(interval=AUTO_REFRESH_MS, key="metrics_autorefresh")
 cfg = load_sim_config()
 data, err = fetch_metrics()
 
+tel_entries = list_telemetry_session_files()
+tel_path_strs = [str(p.resolve()) for _, p in tel_entries]
+if tel_path_strs and "dash_telemetry_csv" not in st.session_state:
+    st.session_state.dash_telemetry_csv = tel_path_strs[0]
+
+
+def _telemetry_label_for(path_str: str) -> str:
+    for lbl, p in tel_entries:
+        try:
+            if str(p.resolve()) == path_str:
+                return lbl
+        except OSError:
+            if str(p) == path_str:
+                return lbl
+    return redact_path(path_str) if not DEBUG else path_str
+
+
 with st.sidebar:
-    st.header("Simulator parameters")
-    st.caption("Save config, then start simulator.")
-    n_devices = st.number_input(
-        "N_DEVICES",
-        min_value=1,
-        max_value=1000,
-        value=int(cfg.get("N_DEVICES", 5)),
-        step=1,
-    )
-    interval_sec = st.number_input(
-        "INTERVAL_SEC",
-        min_value=0.1,
-        max_value=3600.0,
-        value=float(cfg.get("INTERVAL_SEC", 1.0)),
-        step=0.1,
-    )
+    st.header("Simulator")
+    st.caption("Save config, then start.")
+    nd_col, int_col = st.columns(2)
+    with nd_col:
+        n_devices = st.number_input(
+            "N_DEVICES",
+            min_value=1,
+            max_value=1000,
+            value=int(cfg.get("N_DEVICES", 5)),
+            step=1,
+        )
+    with int_col:
+        interval_sec = st.number_input(
+            "INTERVAL_SEC",
+            min_value=0.1,
+            max_value=3600.0,
+            value=float(cfg.get("INTERVAL_SEC", 1.0)),
+            step=0.1,
+        )
     burst_enabled = st.checkbox(
         "BURST_ENABLED",
         value=_as_bool(cfg.get("BURST_ENABLED", False)),
@@ -463,7 +620,7 @@ with st.sidebar:
     burst_cols = st.columns(2)
     with burst_cols[0]:
         burst_start_sec = st.number_input(
-            "Burst start (sec)",
+            "Burst start (s)",
             min_value=0,
             max_value=86400,
             value=int(cfg.get("BURST_START_SEC", 60)),
@@ -471,39 +628,45 @@ with st.sidebar:
         )
     with burst_cols[1]:
         burst_duration_sec = st.number_input(
-            "Burst duration (sec)",
+            "Burst duration (s)",
             min_value=1,
             max_value=86400,
             value=int(cfg.get("BURST_DURATION_SEC", 20)),
             step=1,
         )
-    burst_multiplier = st.number_input(
-        "BURST_MULTIPLIER",
-        min_value=0.1,
-        max_value=100.0,
-        value=float(cfg.get("BURST_MULTIPLIER", 5.0)),
-        step=0.1,
-    )
-    max_runtime_sec = st.number_input(
-        "Max runtime (seconds, 0 = run until Stop)",
-        min_value=0.0,
-        max_value=86400.0,
-        value=0.0,
-        step=1.0,
-        key="dash_max_runtime_sec",
-        help="Passed to the simulator as --max-runtime-sec when starting from here.",
-    )
+    bm_col, rt_col = st.columns(2)
+    with bm_col:
+        burst_multiplier = st.number_input(
+            "Burst mult",
+            min_value=0.1,
+            max_value=100.0,
+            value=float(cfg.get("BURST_MULTIPLIER", 5.0)),
+            step=0.1,
+        )
+    with rt_col:
+        max_runtime_sec = st.number_input(
+            "Max runtime (s)",
+            min_value=0.0,
+            max_value=86400.0,
+            value=0.0,
+            step=1.0,
+            key="dash_max_runtime_sec",
+            help="0 = run until Stop. Passed as --max-runtime-sec when starting the simulator.",
+        )
     st.markdown("<div class='sidebar-section-gap'></div>", unsafe_allow_html=True)
-    st.text_input(
-        "Oracle endpoint",
-        value=ORACLE_URL if DEBUG else f"...{redact_url(ORACLE_URL)}",
-        disabled=True,
-    )
-    st.text_input(
-        "Config path",
-        value=str(SIM_CONFIG_PATH) if DEBUG else redact_path(str(SIM_CONFIG_PATH)),
-        disabled=True,
-    )
+    op_col, cfg_col = st.columns(2)
+    with op_col:
+        st.text_input(
+            "Oracle",
+            value=ORACLE_URL if DEBUG else f"...{redact_url(ORACLE_URL)}",
+            disabled=True,
+        )
+    with cfg_col:
+        st.text_input(
+            "Config",
+            value=str(SIM_CONFIG_PATH) if DEBUG else redact_path(str(SIM_CONFIG_PATH)),
+            disabled=True,
+        )
 
     if st.button("Save config", type="primary", use_container_width=True, key="dash_save_config"):
         payload = {
@@ -528,18 +691,26 @@ with st.sidebar:
                 st.warning("Could not write config file.")
 
     st.markdown("<div class='sidebar-section-gap'></div>", unsafe_allow_html=True)
-    st.subheader("Simulator run")
     running = _simulator_running()
-    st.markdown(
+    chip = (
         "<span class='status-chip status-ok'>Running</span>"
         if running
-        else "<span class='status-chip status-warn'>Stopped</span>",
+        else "<span class='status-chip status-warn'>Stopped</span>"
+    )
+    st.markdown(
+        f"<p class='sidebar-run-line'><strong>Simulator run</strong> &nbsp; {chip}</p>",
         unsafe_allow_html=True,
     )
 
-    start_col, stop_col = st.columns(2)
+    start_col, stop_col = st.columns(2, gap="small")
     with start_col:
-        if st.button("Start simulator", type="primary", disabled=running):
+        if st.button(
+            "Start simulator",
+            type="primary",
+            disabled=running,
+            use_container_width=True,
+            key="dash_start_sim",
+        ):
             if _simulator_running():
                 st.warning("Simulator is already running. Stop it first or use the other console.")
             elif not SIM_CONFIG_PATH.is_file():
@@ -568,7 +739,12 @@ with st.sidebar:
                     else:
                         st.error("Could not start simulator.")
     with stop_col:
-        if st.button("Stop simulator", disabled=not running):
+        if st.button(
+            "Stop simulator",
+            disabled=not running,
+            use_container_width=True,
+            key="dash_stop_sim",
+        ):
             proc = st.session_state.sim_proc
             if proc is None or proc.poll() is not None:
                 st.session_state.sim_proc = None
@@ -584,11 +760,50 @@ with st.sidebar:
                 st.success("Simulator stopped.")
                 st.rerun()
 
-    if st.button("Refresh metrics now"):
-        st.rerun()
+    st.markdown("<div class='sidebar-btn-row-gap'></div>", unsafe_allow_html=True)
+    ref_col, past_col = st.columns(2, gap="small")
+    with ref_col:
+        if st.button("Refresh", use_container_width=True, key="dash_refresh_metrics"):
+            st.rerun()
+    with past_col:
+        if st.button(
+            "Past sessions",
+            use_container_width=True,
+            key="dash_open_past_sessions",
+            help="Open the telemetry archive folder on disk (rotated session CSVs).",
+        ):
+            err = open_past_sessions_folder()
+            if err:
+                st.warning(f"Could not open folder: {err}")
+            else:
+                st.toast("Opened past sessions folder", icon="📂")
+
+    if tel_path_strs:
+        cur = st.session_state.get("dash_telemetry_csv", tel_path_strs[0])
+        if cur not in tel_path_strs:
+            cur = tel_path_strs[0]
+            st.session_state.dash_telemetry_csv = cur
+        t_idx = tel_path_strs.index(cur)
+        selected_telemetry_str = st.selectbox(
+            "Telemetry session",
+            tel_path_strs,
+            index=t_idx,
+            format_func=_telemetry_label_for,
+            key="dash_telemetry_session_select",
+            help="History chart and export use this file. Pick archived runs after rotation.",
+        )
+        st.session_state.dash_telemetry_csv = selected_telemetry_str
 
     try:
-        export_zip_bytes, export_zip_name = build_results_export_zip(data)
+        tel_for_export = (
+            Path(st.session_state.dash_telemetry_csv)
+            if tel_path_strs and st.session_state.get("dash_telemetry_csv")
+            else None
+        )
+        export_zip_bytes, export_zip_name = build_results_export_zip(
+            data,
+            telemetry_csv_path_override=tel_for_export,
+        )
     except Exception as ex:
         LOG.exception("Failed to build export zip")
         err_buf = io.BytesIO()
@@ -782,14 +997,17 @@ with cat_anchoring:
 st.markdown("</div>", unsafe_allow_html=True)
 
 st.subheader("Window history (telemetry_windows.csv)")
+selected_csv = Path(
+    st.session_state.get("dash_telemetry_csv", str(telemetry_csv_path().resolve()))
+)
 st.caption(
-    f"Source: `"
-    f"{telemetry_csv_path() if DEBUG else redact_path(str(telemetry_csv_path()))}"
+    f"Selected: `"
+    f"{selected_csv if DEBUG else redact_path(str(selected_csv))}"
     f"`. Reloads on every rerun (auto-refresh ~{AUTO_REFRESH_MS // 1000}s). "
     f"Anomaly threshold Z_THRESHOLD={Z_THRESHOLD} (env, match oracle)."
 )
 
-df_csv, csv_err = load_telemetry_csv()
+df_csv, csv_err = load_telemetry_csv(selected_csv)
 if csv_err:
     st.warning(csv_err)
 elif df_csv is None:

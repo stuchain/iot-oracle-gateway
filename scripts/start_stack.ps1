@@ -348,7 +348,7 @@ if (Test-PortInUse -Port 8000) {
 }
 else {
     Write-Host 'Starting oracle (new window)...'
-    $oracleInner = "set HMAC_SECRET=local-dev-secret&& set CONTRACT_ADDRESS=$contractAddress&& cd /d `"$RepoRoot`" && `"$py`" -m oracle.service"
+    $oracleInner = "set HMAC_SECRET=local-dev-secret&& set CONTRACT_ADDRESS=$contractAddress&& set TELEMETRY_ROTATE_ON_START=true&& cd /d `"$RepoRoot`" && `"$py`" -m oracle.service"
     $oracleCmd = "`"$oracleInner`""
     Start-Process cmd.exe -ArgumentList @('/k', $oracleCmd) | Out-Null
 }

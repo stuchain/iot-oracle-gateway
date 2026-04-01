@@ -58,7 +58,7 @@ Run from the **repository root** unless noted. Use the **same `HMAC_SECRET`** fo
 3. **Deploy the contract** (optional if you only want MQTT → oracle → CSV without anchoring): from `contracts/`, `npm install`, `npx hardhat compile`, `npx hardhat run scripts/deploy.js --network localhost`. Copy the printed address into **`CONTRACT_ADDRESS`** (or `oracle/contract.json` if you use that workflow).
 4. **Start the oracle:** `python -m oracle.service` — HTTP **`/metrics`** defaults to **port 8000** (see [Deploying TelemetryAnchor](#deploying-telemetryanchor-local-ganache) for env).
 5. **Start the simulator:** e.g. `python -m simulator.iot_simulator`, or with dashboard-saved config `python -m simulator.iot_simulator --config config/sim_config.json` (see [Simulator](#simulator) and [Using the dashboard](#using-the-dashboard)).
-6. **Optional — dashboard:** `streamlit run dashboard/app.py` (reads **`/metrics`** and **`data/telemetry_windows.csv`**).
+6. **Optional — dashboard:** `streamlit run dashboard/app.py` (reads **`/metrics`** and **`data/telemetry_windows.csv`**). Use the sidebar **Telemetry session** control to plot and export the active file or archived runs under **`data/telemetry_archive/`** (see **`TELEMETRY_ROTATE_ON_START`** below). **Open past sessions** opens that archive folder in your file manager.
 
 **Reproducible experiments (Phase 7):** with services up, you can run **`scripts/run_experiment_baseline.sh`** or **`scripts/run_experiment_burst.sh`** (bash/Git Bash), or **`scripts/run_experiment_baseline.ps1`** / **`scripts/run_experiment_burst.ps1`** on Windows, then **`python scripts/plot_results.py`** to generate plots under **`plots/`**.
 
@@ -163,6 +163,8 @@ Values load from the environment (and **`.env`** via `python-dotenv` in the orac
 | `ANCHOR_INTERVAL_SEC` | `60` — seconds between anchoring attempts |
 | **Oracle — data paths** | |
 | `DATA_DIR` | `data` — repo-root relative; window CSV is `telemetry_windows.csv` inside it (`WINDOWS_CSV_PATH` in code) |
+| `TELEMETRY_ROTATE_ON_START` | `false` — when `true`, each oracle **process start** moves a non-empty `telemetry_windows.csv` into `${DATA_DIR}/${TELEMETRY_ARCHIVE_SUBDIR}/` with a UTC timestamp in the filename, then starts a fresh CSV (the **`run.bat`** / `start_stack.ps1` launcher sets this for the oracle) |
+| `TELEMETRY_ARCHIVE_SUBDIR` | `telemetry_archive` — subdirectory of `DATA_DIR` for rotated telemetry CSVs |
 | `ANCHORING_LOG_PATH` | `${DATA_DIR}/anchoring_log.csv` |
 | **Simulator** | |
 | `N_DEVICES`, `INTERVAL_SEC` | device count and publish interval |
