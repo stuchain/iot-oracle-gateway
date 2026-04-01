@@ -198,7 +198,24 @@ def test_send_anchor_returns_contract_exception_text(monkeypatch, tmp_path):
             "http://127.0.0.1:8545", "0x" + "a" * 40, str(abi_file), b"\x02" * 32, 1, 2, 3
         )
     assert out.success is False
-    assert "bad contract" in (out.error or "")
+    assert out.error == "anchor_transaction_failed"
+
+
+def test_send_anchor_in_debug_mode_returns_raw_exception(monkeypatch, tmp_path):
+    monkeypatch.setattr("oracle.anchor_contract.DEBUG", True)
+    monkeypatch.setattr("oracle.anchor_contract.load_contract_abi", lambda p: MINIMAL_ANCHOR_ABI)
+    abi_file = tmp_path / "abi.json"
+    abi_file.write_text(json.dumps({"abi": MINIMAL_ANCHOR_ABI}), encoding="utf-8")
+    with patch("oracle.anchor_contract.Web3") as W3:
+        w3 = W3.return_value
+        w3.is_connected.return_value = True
+        w3.eth.accounts = ["0x" + "a" * 40]
+        w3.eth.contract.side_effect = RuntimeError("bad contract debug detail")
+        out = send_anchor(
+            "http://127.0.0.1:8545", "0x" + "a" * 40, str(abi_file), b"\x02" * 32, 1, 2, 3
+        )
+    assert out.success is False
+    assert "bad contract debug detail" in (out.error or "")
 
 
 def test_anchor_tick_skip_continues_when_anchoring_log_write_fails(tmp_path):

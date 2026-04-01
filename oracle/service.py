@@ -18,16 +18,22 @@ from fastapi import FastAPI
 from oracle.anchor_contract import AnchorResult, send_anchor
 from oracle.batch import build_batch
 from oracle.config import (
+    ALLOW_INSECURE_DEFAULT_SECRET,
     ANCHORING_LOG_PATH,
     ANCHOR_INTERVAL_SEC,
     CONTRACT_ABI_PATH,
     CONTRACT_ADDRESS,
+    DEBUG,
+    DEFAULT_HMAC_SECRET,
     EWMA_ALPHA,
     GANACHE_URL,
     HMAC_SECRET,
+    SAFE_ERRORS,
     WINDOW_SEC,
     WINDOWS_CSV_PATH,
     Z_THRESHOLD,
+    redact_path,
+    sanitize_exception,
 )
 from oracle.ewma import EWMAZScoreAnomalyDetector
 from oracle.mqtt_client import start_mqtt_consumer
@@ -245,8 +251,19 @@ class OracleState:
         try:
             result = self._anchor_send(batch_hash, start_ms, end_ms, count)
         except Exception as e:
-            LOG.warning("anchor send failed: %s", e)
-            result = AnchorResult(None, False, error=str(e))
+            if DEBUG:
+                LOG.warning("anchor send failed: %s", e)
+            else:
+                LOG.warning("anchor send failed")
+            result = AnchorResult(
+                None,
+                False,
+                error=sanitize_exception(
+                    e,
+                    fallback="anchor_send_failed",
+                    debug=DEBUG,
+                ),
+            )
         with self._lock:
             if result.success:
                 del self._pending_anchor[: len(snapshot)]
@@ -332,6 +349,15 @@ def create_app(
     """Build FastAPI app and start background MQTT consumer unless ``start_mqtt=False``."""
     ws = window_sec if window_sec is not None else WINDOW_SEC
     secret_str = hmac_secret if hmac_secret is not None else HMAC_SECRET
+    if (
+        secret_str == DEFAULT_HMAC_SECRET
+        and not DEBUG
+        and not ALLOW_INSECURE_DEFAULT_SECRET
+    ):
+        raise RuntimeError(
+            "Refusing to start with default HMAC secret. "
+            "Set HMAC_SECRET or ALLOW_INSECURE_DEFAULT_SECRET=true for local dev."
+        )
     secret_bytes = secret_str.encode("utf-8")
     csv_p = csv_path if csv_path is not None else WINDOWS_CSV_PATH
     alpha = ewma_alpha if ewma_alpha is not None else EWMA_ALPHA
@@ -349,7 +375,13 @@ def create_app(
         anchor_send = anchor_runner
     elif ca:
         if not os.path.isfile(ap):
-            LOG.error("CONTRACT_ABI_PATH not found: %s — anchoring disabled", ap)
+            if DEBUG:
+                LOG.error("CONTRACT_ABI_PATH not found: %s - anchoring disabled", ap)
+            else:
+                LOG.error(
+                    "CONTRACT_ABI_PATH not found (%s) - anchoring disabled",
+                    redact_path(ap),
+                )
         else:
 
             def _send(bh: bytes, sm: int, em: int, c: int) -> AnchorResult:
@@ -421,7 +453,13 @@ def create_app(
 
     @app.get("/metrics")
     def metrics() -> dict[str, Any]:
-        return state.metrics_payload()
+        payload = state.metrics_payload()
+        anchor = payload.get("last_anchor_info")
+        if isinstance(anchor, dict):
+            raw_error = anchor.get("error")
+            if raw_error and SAFE_ERRORS and not DEBUG:
+                anchor["error"] = "anchor_send_failed"
+        return payload
 
     app.state.oracle_state = state
     app.state.message_queue = q

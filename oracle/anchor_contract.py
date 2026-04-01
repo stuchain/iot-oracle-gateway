@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from web3 import Web3
+from oracle.config import DEBUG, sanitize_exception
 
 LOG = logging.getLogger(__name__)
 
@@ -65,5 +66,16 @@ def send_anchor(
             error=None,
         )
     except Exception as e:
-        LOG.warning("anchor transaction failed: %s", e)
-        return AnchorResult(None, False, error=str(e))
+        if DEBUG:
+            LOG.warning("anchor transaction failed: %s", e)
+        else:
+            LOG.warning("anchor transaction failed")
+        return AnchorResult(
+            None,
+            False,
+            error=sanitize_exception(
+                e,
+                fallback="anchor_transaction_failed",
+                debug=DEBUG,
+            ),
+        )

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 import time
+import uuid
 from typing import Any, Optional
 
 import paho.mqtt.client as mqtt
@@ -16,8 +18,33 @@ LOG = logging.getLogger(__name__)
 
 TELEMETRY_TOPIC = "iot/devices/+/telemetry"
 
-RECONNECT_SLEEP_SEC = 5.0
 CONNECT_RETRY_SLEEP_SEC = 3.0
+
+# Paho built-in reconnect backoff (seconds); do not run a second reconnect thread alongside loop_forever.
+MQTT_RECONNECT_MIN_SEC = 1
+MQTT_RECONNECT_MAX_SEC = 120
+
+
+def _disconnect_rc_hint(rc: int) -> str:
+    if rc == 0:
+        return "clean disconnect"
+    hints = {
+        1: "unexpected disconnect",
+        2: "protocol error or broker rejected session (duplicate client_id, bad protocol)",
+        3: "bad user name or password",
+        4: "not authorized",
+        5: "unacceptable protocol version",
+        6: "connection lost",
+        7: "connection lost",
+    }
+    return hints.get(rc, "see Paho/broker docs for rc")
+
+
+def _create_mqtt_client() -> mqtt.Client:
+    """Unique client_id avoids broker kicking duplicate default sessions (rc=2 loops)."""
+    cid = f"oracle-sub-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    # MQTTv311 + default callback API v1: stable on_disconnect(client, userdata, rc).
+    return mqtt.Client(client_id=cid, protocol=mqtt.MQTTv311)
 
 
 def make_on_message_handler(message_queue: "queue.Queue[tuple[str, int]]"):
@@ -46,7 +73,11 @@ def make_on_message_handler(message_queue: "queue.Queue[tuple[str, int]]"):
 def _on_disconnect_factory():
     def on_disconnect(_client: mqtt.Client, _userdata: Any, rc: int) -> None:
         if rc != 0:
-            LOG.warning("MQTT disconnected unexpectedly (rc=%s)", rc)
+            LOG.warning(
+                "MQTT disconnected (rc=%s: %s); paho will reconnect with backoff",
+                rc,
+                _disconnect_rc_hint(rc),
+            )
 
     return on_disconnect
 
@@ -68,18 +99,6 @@ def _connect_with_retry(client: mqtt.Client, host: str, port: int) -> None:
             time.sleep(CONNECT_RETRY_SLEEP_SEC)
 
 
-def _reconnect_watch_loop(client: mqtt.Client, host: str, port: int) -> None:
-    """If the broker drops, retry reconnect indefinitely with sleep between attempts."""
-    while True:
-        time.sleep(RECONNECT_SLEEP_SEC)
-        if not client.is_connected():
-            LOG.warning("MQTT not connected; reconnecting to %s:%s ...", host, port)
-            try:
-                client.reconnect()
-            except Exception as e:
-                LOG.warning("MQTT reconnect failed: %s (retry in %.0fs)", e, RECONNECT_SLEEP_SEC)
-
-
 def start_mqtt_consumer(
     message_queue: Optional["queue.Queue[tuple[str, int]]"] = None,
     host: Optional[str] = None,
@@ -99,9 +118,10 @@ def start_mqtt_consumer(
     p = port if port is not None else MQTT_PORT
     q: queue.Queue[tuple[str, int]] = message_queue if message_queue is not None else queue.Queue()
 
-    client = mqtt.Client()
+    client = _create_mqtt_client()
     client.on_message = make_on_message_handler(q)
     client.on_disconnect = _on_disconnect_factory()
+    client.reconnect_delay_set(MQTT_RECONNECT_MIN_SEC, MQTT_RECONNECT_MAX_SEC)
 
     _connect_with_retry(client, h, p)
 
@@ -109,13 +129,5 @@ def start_mqtt_consumer(
 
     loop_thread = threading.Thread(target=client.loop_forever, daemon=True, name="oracle-mqtt-loop")
     loop_thread.start()
-
-    reconnect_thread = threading.Thread(
-        target=_reconnect_watch_loop,
-        args=(client, h, p),
-        daemon=True,
-        name="oracle-mqtt-reconnect",
-    )
-    reconnect_thread.start()
 
     return client, q, loop_thread

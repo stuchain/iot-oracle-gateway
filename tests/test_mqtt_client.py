@@ -2,15 +2,13 @@
 import queue
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from oracle.mqtt_client import (
     CONNECT_RETRY_SLEEP_SEC,
-    RECONNECT_SLEEP_SEC,
+    MQTT_RECONNECT_MAX_SEC,
+    MQTT_RECONNECT_MIN_SEC,
     TELEMETRY_TOPIC,
     _connect_with_retry,
     _on_disconnect_factory,
-    _reconnect_watch_loop,
     make_on_message_handler,
     start_mqtt_consumer,
 )
@@ -44,10 +42,12 @@ def test_start_mqtt_consumer_subscribes_and_on_message_enqueues(mock_client_cls,
     mock_client_cls.assert_called_once()
     mock_client.connect.assert_called_once_with("test-host", 9999)
     mock_client.subscribe.assert_called_once_with(TELEMETRY_TOPIC)
-    assert mock_thread_cls.call_count == 2
+    mock_client.reconnect_delay_set.assert_called_once_with(
+        MQTT_RECONNECT_MIN_SEC, MQTT_RECONNECT_MAX_SEC
+    )
+    assert mock_thread_cls.call_count == 1
     assert mock_thread_cls.call_args_list[0][1]["name"] == "oracle-mqtt-loop"
-    assert mock_thread_cls.call_args_list[1][1]["name"] == "oracle-mqtt-reconnect"
-    assert mock_thread_cls.return_value.start.call_count == 2
+    assert mock_thread_cls.return_value.start.call_count == 1
 
     assert callable(mock_client.on_message)
     assert callable(mock_client.on_disconnect)
@@ -81,56 +81,6 @@ def test_on_disconnect_logs_warning_only_for_nonzero_rc():
         warn.assert_not_called()
         cb(MagicMock(), None, 1)
         warn.assert_called_once()
-
-
-def test_reconnect_watch_loop_calls_reconnect_when_disconnected():
-    client = MagicMock()
-    client.is_connected.side_effect = [False, RuntimeError("stop-loop")]
-
-    def _raise_after_second_sleep(_):
-        if client.is_connected.call_count >= 1:
-            raise RuntimeError("stop-loop")
-
-    with patch("oracle.mqtt_client.time.sleep", side_effect=_raise_after_second_sleep):
-        with pytest.raises(RuntimeError, match="stop-loop"):
-            _reconnect_watch_loop(client, "h", 1883)
-
-    client.reconnect.assert_called_once()
-
-
-def test_reconnect_watch_loop_does_not_reconnect_when_connected():
-    client = MagicMock()
-    client.is_connected.return_value = True
-
-    with patch("oracle.mqtt_client.time.sleep", side_effect=RuntimeError("stop-loop")):
-        with pytest.raises(RuntimeError, match="stop-loop"):
-            _reconnect_watch_loop(client, "h", 1883)
-
-    client.reconnect.assert_not_called()
-
-
-def test_reconnect_watch_loop_handles_reconnect_exception_and_continues():
-    client = MagicMock()
-    client.is_connected.side_effect = [False, False, RuntimeError("stop-loop")]
-    client.reconnect.side_effect = [Exception("boom"), None]
-
-    sleep_calls = {"n": 0}
-
-    def _sleep(_seconds):
-        sleep_calls["n"] += 1
-        # Let loop run enough for two reconnect attempts, then stop.
-        if sleep_calls["n"] >= 3:
-            raise RuntimeError("stop-loop")
-
-    with patch("oracle.mqtt_client.time.sleep", side_effect=_sleep), patch(
-        "oracle.mqtt_client.LOG.warning"
-    ) as warn:
-        with pytest.raises(RuntimeError, match="stop-loop"):
-            _reconnect_watch_loop(client, "h", 1883)
-
-    assert client.reconnect.call_count == 2
-    # Includes "not connected" warnings and one reconnect failure warning.
-    assert warn.call_count >= 3
 
 
 def test_make_on_message_invalid_utf8_does_not_enqueue_and_logs_warning():

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from simulator.hmac_utils import compute_hmac
 
 from oracle.service import OracleState, create_app
+from oracle.windows import WindowSummary
 
 
 def _signed_payload(secret: str, ts_ms: int, **overrides) -> str:
@@ -447,3 +448,57 @@ def test_service_shutdown_attempts_disconnect_even_if_loop_stop_fails(mock_start
 
     fake_client.loop_stop.assert_called_once()
     fake_client.disconnect.assert_called_once()
+
+
+def test_create_app_rejects_default_hmac_secret_without_override(tmp_path):
+    q: queue.Queue[tuple[str, int]] = queue.Queue()
+    try:
+        create_app(
+            start_mqtt=False,
+            message_queue=q,
+            csv_path=str(tmp_path / "telemetry_windows.csv"),
+            anchoring_log_path=str(tmp_path / "anchoring_log.csv"),
+            contract_address="",
+            window_sec=5,
+            hmac_secret="change-me-in-production",
+        )
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "Refusing to start with default HMAC secret" in str(e)
+
+
+def test_metrics_anchor_error_is_sanitized_by_default(tmp_path):
+    q: queue.Queue[tuple[str, int]] = queue.Queue()
+
+    def runner(_batch_hash: bytes, _start_ms: int, _end_ms: int, _count: int):
+        raise RuntimeError("rpc error at http://127.0.0.1:8545 secret=abc")
+
+    app = create_app(
+        start_mqtt=False,
+        message_queue=q,
+        csv_path=str(tmp_path / "telemetry_windows.csv"),
+        anchoring_log_path=str(tmp_path / "anchoring_log.csv"),
+        contract_address="",
+        window_sec=5,
+        hmac_secret="integration-test-secret",
+        anchor_runner=runner,
+        anchor_interval_sec=3600.0,
+    )
+    state = app.state.oracle_state
+    state._pending_anchor.append(
+        WindowSummary(
+            window_start_ms=0,
+            window_end_ms=5000,
+            msg_count=1,
+            msgs_per_sec=0.2,
+            avg_latency_ms=1.0,
+            z_score=0.0,
+            is_anomaly=False,
+        )
+    )
+    with TestClient(app) as client:
+        state.anchor_tick()
+        r = client.get("/metrics")
+    assert r.status_code == 200
+    err = r.json()["last_anchor_info"]["error"]
+    assert err == "anchor_send_failed"
