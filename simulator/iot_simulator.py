@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import time
+import uuid
 
 from dotenv import load_dotenv
 
@@ -17,6 +18,11 @@ LOG = logging.getLogger(__name__)
 TOPIC_PATTERN = "iot/devices/{device_id}/telemetry"
 
 CONNECT_RETRY_SLEEP_SEC = 3.0
+# Exponential backoff when disconnected (avoids tight reconnect+log spam).
+MQTT_ENSURE_BACKOFF_INITIAL_SEC = 0.5
+MQTT_ENSURE_BACKOFF_MAX_SEC = 30.0
+MQTT_RECONNECT_DELAY_MIN_SEC = 1
+MQTT_RECONNECT_DELAY_MAX_SEC = 120
 
 # Sensor ranges (doc: temp 20-30°C, humidity 40-80, power 10-100)
 TEMP_RANGE = (20.0, 30.0)
@@ -159,14 +165,21 @@ def _mqtt_connect_with_retry(client, host: str, port: int) -> None:
 
 
 def _mqtt_ensure_connected(client, host: str, port: int) -> None:
-    """If the session dropped, reconnect before publishing."""
+    """If the session dropped, reconnect before publishing (with backoff; no busy-loop)."""
+    delay = MQTT_ENSURE_BACKOFF_INITIAL_SEC
     while not client.is_connected():
-        LOG.warning("Reconnecting to MQTT broker at %s:%s ...", host, port)
+        LOG.warning(
+            "MQTT not connected to %s:%s; attempting reconnect (next wait up to %.1fs) ...",
+            host,
+            port,
+            min(delay, MQTT_ENSURE_BACKOFF_MAX_SEC),
+        )
         try:
             client.reconnect()
         except Exception as e:
-            LOG.warning("MQTT reconnect failed: %s — retry in %.0fs", e, CONNECT_RETRY_SLEEP_SEC)
-            time.sleep(CONNECT_RETRY_SLEEP_SEC)
+            LOG.warning("MQTT reconnect failed: %s", e)
+        time.sleep(min(delay, MQTT_ENSURE_BACKOFF_MAX_SEC))
+        delay = min(delay * 2.0, MQTT_ENSURE_BACKOFF_MAX_SEC)
 
 
 def run_tick(client, device_ids_list: list[str], secret: str, host: str, port: int) -> None:
@@ -196,11 +209,16 @@ def main() -> None:
     except ImportError:
         LOG.error("paho-mqtt required; pip install paho-mqtt")
         raise
-    client = mqtt.Client()
+    sim_cid = f"iot-sim-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    client = mqtt.Client(client_id=sim_cid, protocol=mqtt.MQTTv311)
+    client.reconnect_delay_set(MQTT_RECONNECT_DELAY_MIN_SEC, MQTT_RECONNECT_DELAY_MAX_SEC)
 
     def on_disconnect(_client, _userdata, rc):
         if rc != 0:
-            LOG.warning("MQTT disconnected unexpectedly (rc=%s)", rc)
+            LOG.warning(
+                "MQTT disconnected (rc=%s); network loop will reconnect with backoff",
+                rc,
+            )
 
     client.on_disconnect = on_disconnect
     _mqtt_connect_with_retry(client, cfg.host, cfg.port)
