@@ -1,6 +1,12 @@
 # IoT Oracle Gateway
 
-Signed MQTT telemetry → **oracle** (HMAC, time windows, EWMA z-score) → **`data/telemetry_windows.csv`** and **`GET /metrics`** (`:8000`). Optional **TelemetryAnchor** on a local chain. **Streamlit** dashboard (`:8501`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+## Description
+
+This repository is a **single-machine** reference stack for coursework and demos: simulated IoT devices publish **JSON telemetry** over **MQTT**; the **oracle** subscribes, checks **HMAC** signatures, groups messages into **fixed-length time windows** (by ingest time), and computes **throughput**, **latency**, and **EWMA-based z-scores** for simple anomaly flagging. Results are **appended to CSV** (`telemetry_windows` under `DATA_DIR`) and exposed as **JSON** via **`GET /metrics`** on port **8000**.
+
+Optionally, the oracle can **batch window hashes** and submit them to a **`TelemetryAnchor`** Solidity contract on a **local** Ethereum-compatible node (Hardhat/Ganache on **8545**). A **Streamlit** app on **8501** polls `/metrics`, plots historical windows from the CSV (including archived runs when rotation is enabled), and can drive the simulator from the sidebar.
+
+The stack is intentionally small: **one** oracle process (threaded MQTT + optional anchor loop), **no** container requirement, **no** cloud broker in the defaults. For diagrams, data paths, threading, and module map, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ## Requirements
 
