@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import io
 import sys
 import types
+import zipfile
 from pathlib import Path
 
 
@@ -45,6 +47,7 @@ def _build_streamlit_stub():
     mod.number_input = lambda *a, **k: k.get("value", 0)
     mod.checkbox = lambda *a, **k: k.get("value", False)
     mod.button = lambda *a, **k: False
+    mod.download_button = lambda *a, **k: None
     mod.rerun = lambda *a, **k: None
     mod.columns = lambda n: [_Ctx() for _ in range(n)]
     return mod
@@ -125,7 +128,7 @@ def test_fetch_metrics_request_exception_returns_error(monkeypatch):
     app.requests.get = _raise
     data, err = app.fetch_metrics()
     assert data is None
-    assert "Cannot reach oracle" in (err or "")
+    assert err == "Cannot reach oracle endpoint. Check service and network."
 
 
 def test_load_telemetry_csv_missing_required_columns_returns_error(monkeypatch, tmp_path):
@@ -136,6 +139,16 @@ def test_load_telemetry_csv_missing_required_columns_returns_error(monkeypatch, 
     df, err = app.load_telemetry_csv()
     assert df is None
     assert "missing columns" in (err or "").lower()
+
+
+def test_load_telemetry_csv_missing_file_redacts_absolute_path(monkeypatch, tmp_path):
+    app = _import_dashboard_app(monkeypatch)
+    missing = tmp_path / "not_there.csv"
+    monkeypatch.setenv("TELEMETRY_CSV_PATH", str(missing))
+    df, err = app.load_telemetry_csv()
+    assert df is None
+    assert err == "Telemetry CSV not found. Run the oracle or set TELEMETRY_CSV_PATH."
+    assert str(missing) not in (err or "")
 
 
 def test_load_telemetry_csv_empty_file_returns_empty_df_no_error(monkeypatch, tmp_path):
@@ -158,3 +171,39 @@ def test_telemetry_csv_path_prefers_override_then_data_dir(monkeypatch):
     assert Path("custom_data/telemetry_windows.csv").as_posix() in str(
         app.telemetry_csv_path()
     ).replace("\\", "/")
+
+
+def test_build_results_export_zip_contains_metrics_and_artifacts(monkeypatch, tmp_path):
+    app = _import_dashboard_app(monkeypatch)
+    sim = tmp_path / "sim_config.json"
+    sim.write_text('{"N_DEVICES": 2}', encoding="utf-8")
+    tel = tmp_path / "telemetry_windows.csv"
+    tel.write_text("window_end_ms,msgs_per_sec,z_score\n1000,1.0,0\n", encoding="utf-8")
+    anch = tmp_path / "anchoring_log.csv"
+    anch.write_text("timestamp_iso,batch_hash,success\n", encoding="utf-8")
+    metrics = {
+        "verified_count": 1,
+        "last_anchor_info": {
+            "batch_hash": "0xabc",
+            "tx_hash": "0xdef",
+            "success": True,
+        },
+    }
+    zbytes, name = app.build_results_export_zip(
+        metrics,
+        sim_config_path=sim,
+        telemetry_csv_path_override=tel,
+        anchoring_log_path_override=anch,
+        deployment_json_override=tmp_path / "missing_deploy.json",
+        anchor_txt_override=tmp_path / "missing_anchor_txt",
+    )
+    assert name.startswith("iot-oracle-export-") and name.endswith(".zip")
+    zf = zipfile.ZipFile(io.BytesIO(zbytes))
+    names = zf.namelist()
+    assert "metrics.json" in names
+    assert "sim_config.json" in names
+    assert "telemetry_windows.csv" in names
+    assert "anchoring_log.csv" in names
+    assert "export_manifest.json" in names
+    inner = zf.read("metrics.json").decode("utf-8")
+    assert "0xabc" in inner and "last_anchor_info" in inner
