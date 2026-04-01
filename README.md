@@ -22,11 +22,20 @@ From the repository root, double-click **`run.bat`** (or run it from **cmd**). T
 4. Starts **Mosquitto** with **`mosquitto/mosquitto.conf`**
 5. Starts the **Streamlit** dashboard and opens **http://127.0.0.1:8501** in your browser
 
+The launcher now performs explicit readiness checks (RPC, oracle, dashboard) instead of fixed sleeps, and it fails fast with actionable errors if a required service is not reachable in time.
+
 **Python:** use **Python on PATH**, or create a virtual environment at the repo root named **`venv`** (the script prefers **`venv\Scripts\python.exe`**). You can still run **`pip install -r requirements.txt`** yourself before **`run.bat`**; otherwise the script installs missing packages automatically.
 
 **From the dashboard:** save simulator parameters in the sidebar, then use **Start simulator** / **Stop simulator**. Optional **Max runtime** sets **`--max-runtime-sec`** for a timed run. Simulator logs appear in a **separate console window**.
 
-**Stopping the stack:** close each console window that was opened (Ganache, Mosquitto, oracle, Streamlit). **Do not** start **`run.bat`** again while those processes are still using ports **8545**, **1883**, **8000**, or **8501**, or you will get port conflicts.
+**Stopping the stack (clean next run):**
+
+1. Close each console window that was opened (Hardhat node, Mosquitto, oracle, Streamlit), or use **Task Manager** to end those `python.exe` / `node.exe` / `mosquitto.exe` windows if a window is stuck.
+2. Closing windows is **safe** for project data: CSV files and configs are written incrementally; you are not required to “eject” the database. The next **`run.bat`** redeploys to the local chain and continues normally.
+3. If the next launch reports **ports already in use** or health checks fail, run **`stop.bat`** from the repo root (or `powershell -File scripts/stop_stack.ps1`). It finds processes **listening** on **8545**, **1883**, **8000**, and **8501** and offers to stop them. For a non-interactive cleanup: `powershell -File scripts/stop_stack.ps1 -Force`.  
+   **Warning:** that stops *whatever* is listening on those ports, not only this project—use after you have closed other apps using those ports, or when you intend a full dev reset.
+
+The launcher may **reuse** an already-running broker on **1883** or JSON-RPC on **8545** if they respond correctly; it can **reuse** oracle/dashboard on **8000**/**8501** if they pass health checks. If something is **broken** on a port, use **`stop.bat`** before **`run.bat`** again.
 
 On **Linux / macOS** or for a **manual** setup, follow **[How to run (ordered)](#how-to-run-ordered)** below.
 
@@ -120,6 +129,18 @@ Or run **`scripts/run_experiment_burst.sh`** / **`scripts/run_experiment_burst.p
 
 Values load from the environment (and **`.env`** via `python-dotenv` in the oracle). Defaults below match [`oracle/config.py`](oracle/config.py) unless stated.
 
+### Privacy / safe output defaults
+
+- By default, the project runs with **safe error output** for user-facing surfaces:
+  - dashboard messages avoid full local paths and raw exception internals,
+  - `/metrics` anchor error values are sanitized (for example `anchor_send_failed`),
+  - detailed exception text is reserved for debug mode.
+- Set `DEBUG=true` to enable verbose diagnostics (including raw exception details).
+- `SAFE_ERRORS=true` is enabled by default and keeps API error payloads sanitized.
+- For HMAC safety, the oracle now refuses to start with the default secret unless you set:
+  - a real `HMAC_SECRET`, or
+  - `ALLOW_INSECURE_DEFAULT_SECRET=true` explicitly for local development.
+
 | Variable | Default / notes |
 |----------|-----------------|
 | **Oracle — MQTT** | |
@@ -130,7 +151,11 @@ Values load from the environment (and **`.env`** via `python-dotenv` in the orac
 | `EWMA_ALPHA` | `0.2` — EWMA smoothing |
 | `Z_THRESHOLD` | `3.0` — z-score above ⇒ `is_anomaly` |
 | **Oracle — HMAC** | |
-| `HMAC_SECRET` | `change-me-in-production` — **must match** the simulator |
+| `HMAC_SECRET` | `change-me-in-production` — **must match** the simulator; oracle refuses this default unless explicitly overridden |
+| `ALLOW_INSECURE_DEFAULT_SECRET` | `false` — allow running with default HMAC secret for local-only dev |
+| **Privacy / diagnostics** | |
+| `DEBUG` | `false` — when `true`, include verbose error details in UI/API/log output |
+| `SAFE_ERRORS` | `true` — sanitize user-facing/API error text |
 | **Oracle — anchoring** | |
 | `GANACHE_URL` | `http://127.0.0.1:8545` — JSON-RPC for Web3 |
 | `CONTRACT_ADDRESS` | empty — if unset, anchoring txs are disabled |
