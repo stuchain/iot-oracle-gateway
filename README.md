@@ -8,6 +8,10 @@ Optionally, the oracle can **batch window hashes** and submit them to a **`Telem
 
 The stack is intentionally small: **one** oracle process (threaded MQTT + optional anchor loop), **no** container requirement, **no** cloud broker in the defaults. For diagrams, data paths, threading, and module map, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
+## Demo
+
+![IoT Oracle Gateway demo](docs/content/demo.gif)
+
 ## Requirements
 
 - Python 3.10+
