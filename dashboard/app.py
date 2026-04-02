@@ -441,9 +441,9 @@ def open_past_sessions_folder() -> Optional[str]:
         if sys.platform == "win32":
             subprocess.Popen(f'explorer "{p}"', shell=True)
         elif sys.platform == "darwin":
-            subprocess.run(["open", str(p)], check=False)
+            subprocess.Popen(["open", str(p)])
         else:
-            subprocess.run(["xdg-open", str(p)], check=False)
+            subprocess.Popen(["xdg-open", str(p)])
         return None
     except Exception as e:
         LOG.warning("Could not open past sessions folder: %s", e)
